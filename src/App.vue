@@ -13,6 +13,9 @@ import ToolsPanel from '@/components/ToolsPanel.vue'
 const settings = useSettingsStore()
 const connection = useConnectionStore()
 
+// Base-aware so the logo resolves under the GitHub Pages sub-path deploy.
+const brandLogoUrl = `${import.meta.env.BASE_URL}icon.svg`
+
 const statusMeta = computed(() => {
   switch (connection.status) {
     case 'connected':
@@ -35,7 +38,7 @@ const statusMeta = computed(() => {
   <div class="app-shell">
     <header class="app-header">
       <div class="brand">
-        <img src="/icon.svg" alt="" class="brand-logo" width="36" height="36" />
+        <img :src="brandLogoUrl" alt="" class="brand-logo" width="36" height="36" />
         <div>
           <h1 class="brand-title">Realtime Audio Studio</h1>
           <p class="brand-subtitle text-sm text-muted">

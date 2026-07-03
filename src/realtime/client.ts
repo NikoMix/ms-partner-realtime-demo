@@ -32,6 +32,7 @@ export class RealtimeClient {
   private socket: WebSocket | null = null
   private readonly webSocketFactory: (url: string, protocols?: string[]) => WebSocket
   private readonly audioSink?: RealtimeAudioSink
+  private pendingFunctionResponse = false
 
   constructor(options: RealtimeClientOptions = {}) {
     this.webSocketFactory =
@@ -40,6 +41,9 @@ export class RealtimeClient {
   }
 
   connect(): void {
+    // Drop any prior socket + deferred follow-up before starting a fresh session.
+    this.teardownSocket()
+    this.pendingFunctionResponse = false
     const settings = useSettingsStore()
     const connection = useConnectionStore()
     const events = useEventLogStore()
@@ -78,8 +82,10 @@ export class RealtimeClient {
       socket.onerror = () => this.handleError()
       socket.onclose = (event) => this.handleClose(event)
     } catch (error) {
-      const message =
+      const rawMessage =
         error instanceof Error ? error.message : 'Failed to connect realtime WebSocket.'
+      // Defense-in-depth: never surface a message that could echo the key-bearing URL.
+      const message = redactSecrets(rawMessage, [params.apiKey])
       connection.setError(message)
       events.add({
         direction: 'system',
@@ -111,18 +117,14 @@ export class RealtimeClient {
     const connection = useConnectionStore()
     const events = useEventLogStore()
     connection.setClosing()
+    this.pendingFunctionResponse = false
 
-    const socket = this.socket
-    if (!socket) {
+    const hadSocket = this.socket !== null
+    this.teardownSocket()
+    if (!hadSocket) {
       connection.setClosed(null, '')
       return
     }
-
-    this.clearSocketHandlers(socket)
-    if (socket.readyState === SOCKET_OPEN || socket.readyState === SOCKET_CONNECTING) {
-      socket.close(NORMAL_CLOSE_CODE, 'Client disconnect')
-    }
-    this.socket = null
     connection.setClosed(NORMAL_CLOSE_CODE, 'Client disconnect')
     events.add({
       direction: 'system',
@@ -194,7 +196,7 @@ export class RealtimeClient {
         useConnectionStore().responseInProgress = true
         return
       case CanonicalServerEvent.ResponseDone:
-        useConnectionStore().responseInProgress = false
+        this.handleResponseDone()
         return
       case CanonicalServerEvent.AudioDelta:
         this.handleAudioDelta(event)
@@ -244,6 +246,17 @@ export class RealtimeClient {
     }
   }
 
+  private handleResponseDone(): void {
+    useConnectionStore().responseInProgress = false
+    if (!this.pendingFunctionResponse) {
+      return
+    }
+    // Flush the deferred tool-result turn now that the active response has ended.
+    this.pendingFunctionResponse = false
+    const settings = useSettingsStore()
+    this.sendEvent(buildResponseCreate(settings.session, settings.profile))
+  }
+
   private handleFunctionCall(event: RealtimeEventBase): void {
     const callId = readStringField(event, 'call_id')
     if (!callId) {
@@ -277,7 +290,15 @@ export class RealtimeClient {
     })
 
     this.sendEvent(buildFunctionCallOutput(callId, output))
-    this.sendEvent(buildResponseCreate(settings.session, settings.profile))
+    // Only one response may be active at a time. If the current response is still
+    // streaming, defer the tool-result turn until ResponseDone; issuing
+    // response.create now would fail with conversation_already_has_active_response
+    // and the tool result would never be verbalized.
+    if (useConnectionStore().responseInProgress) {
+      this.pendingFunctionResponse = true
+    } else {
+      this.sendEvent(buildResponseCreate(settings.session, settings.profile))
+    }
   }
 
   private handleRealtimeError(event: RealtimeEventBase): void {
@@ -365,6 +386,20 @@ export class RealtimeClient {
 
   private redactDetail(value: unknown): string {
     return redactSecrets(safeStringify(value), [useSettingsStore().apiKey])
+  }
+
+  private teardownSocket(): void {
+    const socket = this.socket
+    if (!socket) {
+      return
+    }
+    // Detach handlers first so a trailing close/error from this socket can never
+    // clobber a socket opened by a subsequent connect().
+    this.clearSocketHandlers(socket)
+    if (socket.readyState === SOCKET_OPEN || socket.readyState === SOCKET_CONNECTING) {
+      socket.close(NORMAL_CLOSE_CODE, 'Client disconnect')
+    }
+    this.socket = null
   }
 
   private clearSocketHandlers(socket: WebSocket): void {

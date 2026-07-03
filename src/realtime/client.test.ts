@@ -142,6 +142,47 @@ describe('RealtimeClient', () => {
     expect(responseCreate?.response?.temperature).toBeCloseTo(0.8)
   })
 
+  it('defers the tool-result response.create until the active response completes', () => {
+    const tools = useToolsStore()
+    const tool = tools.addTool()
+    tools.updateTool(tool.id, {
+      name: 'lookup_order',
+      description: 'Look up an order.',
+      parametersJson: '{"type":"object"}',
+      stubResponseJson: '{"ok":true}',
+      enabled: true,
+    })
+    const { client, sockets } = createClient()
+    client.connect()
+    const socket = firstSocket(sockets)
+    socket.open()
+
+    // A response is already streaming when the function call arrives.
+    socket.message(JSON.stringify({ type: 'response.created', response: { id: 'resp-1' } }))
+    socket.message(
+      JSON.stringify({
+        type: 'response.function_call_arguments.done',
+        call_id: 'call-1',
+        name: 'lookup_order',
+        arguments: '{"orderId":"42"}',
+      }),
+    )
+
+    const typesBeforeDone = socket.sent.map((entry) => payload(entry).type)
+    expect(typesBeforeDone).toContain('conversation.item.create')
+    // Must NOT open a new response while one is still active — that would fail
+    // server-side with conversation_already_has_active_response.
+    expect(typesBeforeDone.filter((type) => type === 'response.create')).toHaveLength(0)
+
+    // Once the active response ends, the deferred follow-up turn is flushed exactly once.
+    socket.message(JSON.stringify({ type: 'response.done', response: { id: 'resp-1' } }))
+    const responseCreates = socket.sent
+      .map((entry) => payload(entry))
+      .filter((entry) => entry.type === 'response.create')
+    expect(responseCreates).toHaveLength(1)
+    expect(responseCreates[0]?.response?.temperature).toBeCloseTo(0.8)
+  })
+
   it('forwards audio deltas to the audio sink', () => {
     const enqueue = vi.fn<(base64Pcm16: string) => void>()
     const audioSink: RealtimeAudioSink = {

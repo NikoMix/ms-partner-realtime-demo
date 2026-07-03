@@ -1,4 +1,4 @@
-import { onScopeDispose, ref, watch } from 'vue'
+import { effectScope, onScopeDispose, ref, watch } from 'vue'
 import { Pcm16Player } from '@/audio/player'
 import { MicRecorder } from '@/audio/recorder'
 import { RealtimeClient } from '@/realtime/client'
@@ -146,8 +146,21 @@ type RealtimeSession = ReturnType<typeof createRealtimeSession>
 
 let sharedSession: RealtimeSession | null = null
 
-/** Returns the shared realtime session, creating it on first use. */
+/**
+ * Returns the shared realtime session, creating it on first use. The session is
+ * built inside a detached effect scope so its watcher and disposal hook belong to
+ * the singleton itself rather than to whichever component happens to resolve it
+ * first — unmounting that component must never tear down the shared audio engine.
+ */
 export function useRealtimeSession(): RealtimeSession {
-  sharedSession ??= createRealtimeSession()
+  if (sharedSession) {
+    return sharedSession
+  }
+  const scope = effectScope(true)
+  const created = scope.run(() => createRealtimeSession())
+  if (!created) {
+    throw new Error('Failed to initialize the realtime session.')
+  }
+  sharedSession = created
   return sharedSession
 }
