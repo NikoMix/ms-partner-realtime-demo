@@ -37,23 +37,8 @@ export default defineConfigWithVueTs(
     },
   },
 
-  // AudioWorklet global scope declares its own globals.
-  {
-    name: 'app/audio-worklet',
-    files: ['src/**/*.worklet.ts'],
-    languageOptions: {
-      globals: {
-        AudioWorkletProcessor: 'readonly',
-        registerProcessor: 'readonly',
-        sampleRate: 'readonly',
-        currentFrame: 'readonly',
-        currentTime: 'readonly',
-      },
-    },
-    rules: {
-      'no-undef': 'off',
-    },
-  },
+  // AudioWorklet global scope declares its own globals. The recorder worklet ships as
+  // plain JS from `public/` (see public/pcm-recorder.worklet.js), so it is not linted here.
 
   {
     name: 'app/tests',

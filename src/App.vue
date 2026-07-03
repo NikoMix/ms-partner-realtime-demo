@@ -2,6 +2,13 @@
 import { computed } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 import { useConnectionStore } from '@/stores/connection'
+import PrivacyNotice from '@/components/PrivacyNotice.vue'
+import SessionControlBar from '@/components/SessionControlBar.vue'
+import ConnectionPanel from '@/components/ConnectionPanel.vue'
+import AudioDevicesPanel from '@/components/AudioDevicesPanel.vue'
+import SessionParametersPanel from '@/components/SessionParametersPanel.vue'
+import EventLogPanel from '@/components/EventLogPanel.vue'
+import ToolsPanel from '@/components/ToolsPanel.vue'
 
 const settings = useSettingsStore()
 const connection = useConnectionStore()
@@ -43,7 +50,7 @@ const statusMeta = computed(() => {
         </span>
         <label class="theme-picker">
           <span class="visually-hidden">Theme</span>
-          <select v-model="settings.theme" aria-label="Theme">
+          <select id="theme-select" v-model="settings.theme" name="theme" aria-label="Theme">
             <option value="system">System theme</option>
             <option value="light">Light</option>
             <option value="dark">Dark</option>
@@ -53,36 +60,28 @@ const statusMeta = computed(() => {
     </header>
 
     <main class="app-main">
-      <section class="card privacy-note" aria-labelledby="privacy-heading">
-        <h2 id="privacy-heading" class="privacy-title">Your credentials stay on your device</h2>
-        <p class="text-sm text-muted">
-          The endpoint and API key you enter are held in memory only for this browser session.
-          They are <strong>never stored, logged, or transmitted anywhere</strong> except directly
-          to the Azure AI Foundry / Azure OpenAI endpoint you specify, solely to establish the
-          realtime connection.
-        </p>
-      </section>
+      <PrivacyNotice />
 
-      <section class="summary-grid">
-        <div class="card summary-item">
-          <span class="text-xs text-subtle">Provider</span>
-          <strong>{{ settings.providerDescriptor.label }}</strong>
-        </div>
-        <div class="card summary-item">
-          <span class="text-xs text-subtle">Model preset</span>
-          <strong>{{ settings.modelPreset.label }}</strong>
-        </div>
-        <div class="card summary-item">
-          <span class="text-xs text-subtle">Realtime audio</span>
-          <strong>{{ settings.supportsRealtimeAudio ? 'Supported' : 'Unavailable' }}</strong>
-        </div>
-      </section>
+      <SessionControlBar />
 
-      <p class="scaffold-note text-sm text-muted">
-        The connection form, session parameter controls, tools panel, event log, and audio device
-        pickers are being assembled. This shell verifies the design system, stores, and theme
-        handling are wired correctly.
-      </p>
+      <div class="layout">
+        <div class="column">
+          <ConnectionPanel />
+          <AudioDevicesPanel />
+          <SessionParametersPanel />
+        </div>
+        <div class="column">
+          <EventLogPanel />
+          <ToolsPanel />
+        </div>
+      </div>
+
+      <footer class="app-footer text-xs text-subtle">
+        <span>
+          Model audio streams as PCM16 @ 24&nbsp;kHz. Tools are stubs only — no code or external
+          service is ever executed.
+        </span>
+      </footer>
     </main>
   </div>
 </template>
@@ -138,7 +137,7 @@ const statusMeta = computed(() => {
 }
 
 .app-main {
-  width: min(1100px, 100%);
+  width: min(1280px, 100%);
   margin: 0 auto;
   padding: var(--space-6);
   display: flex;
@@ -146,34 +145,28 @@ const statusMeta = computed(() => {
   gap: var(--space-5);
 }
 
-.privacy-note {
-  padding: var(--space-5);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  border-left: 4px solid var(--accent);
-}
-
-.privacy-title {
-  font-size: var(--text-lg);
-}
-
-.summary-grid {
+.layout {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: var(--space-4);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-5);
+  align-items: start;
 }
 
-.summary-item {
-  padding: var(--space-4);
+.column {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: var(--space-5);
+  min-width: 0;
 }
 
-.scaffold-note {
-  padding: var(--space-4);
-  border: 1px dashed var(--border-strong);
-  border-radius: var(--radius-md);
+.app-footer {
+  padding-top: var(--space-2);
+  text-align: center;
+}
+
+@media (max-width: 980px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 </style>

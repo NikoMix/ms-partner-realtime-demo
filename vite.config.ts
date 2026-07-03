@@ -29,7 +29,9 @@ function buildTimeCsp() {
     "manifest-src 'self'",
     "base-uri 'self'",
     "form-action 'self'",
-    "frame-ancestors 'none'",
+    // frame-ancestors is intentionally omitted here: it is ignored when delivered via a
+    // <meta> element. It is enforced as a real HTTP header on Azure Static Web Apps
+    // (staticwebapp.config.json). GitHub Pages cannot set response headers.
     'upgrade-insecure-requests',
   ].join('; ')
 
@@ -52,7 +54,15 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
       injectRegister: 'auto',
-      includeAssets: ['icon.svg', 'robots.txt'],
+      includeAssets: [
+        'icon.svg',
+        'robots.txt',
+        'apple-touch-icon.png',
+        'pwa-192x192.png',
+        'pwa-512x512.png',
+        'pwa-maskable-192x192.png',
+        'pwa-maskable-512x512.png',
+      ],
       manifest: {
         name: 'Realtime Audio Studio for Azure AI Foundry',
         short_name: 'Realtime Studio',
@@ -67,7 +77,18 @@ export default defineConfig({
           { src: 'icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
           { src: 'pwa-192x192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
           { src: 'pwa-512x512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
-          { src: 'pwa-maskable-512x512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+          {
+            src: 'pwa-maskable-192x192.png',
+            sizes: '192x192',
+            type: 'image/png',
+            purpose: 'maskable',
+          },
+          {
+            src: 'pwa-maskable-512x512.png',
+            sizes: '512x512',
+            type: 'image/png',
+            purpose: 'maskable',
+          },
         ],
       },
       workbox: {
@@ -106,7 +127,7 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'html'],
       include: ['src/**/*.{ts,vue}'],
-      exclude: ['src/**/*.{test,spec}.ts', 'src/**/*.d.ts', 'src/**/*.worklet.ts'],
+      exclude: ['src/**/*.{test,spec}.ts', 'src/**/*.d.ts'],
     },
   },
 })
