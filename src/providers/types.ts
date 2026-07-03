@@ -76,7 +76,8 @@ export const PROVIDER_DESCRIPTORS: Readonly<Record<ProviderId, ProviderDescripto
       'Your Azure OpenAI resource endpoint. Provide the realtime deployment name separately below.',
     keyHelp:
       'API key for the resource. Held only in memory for this session — never stored, logged, or sent anywhere except your chosen endpoint.',
-    docsUrl: 'https://learn.microsoft.com/azure/ai-services/openai/how-to/realtime-audio-websockets',
+    docsUrl:
+      'https://learn.microsoft.com/azure/ai-services/openai/how-to/realtime-audio-websockets',
   },
   'github-models': {
     id: 'github-models',

@@ -5,7 +5,9 @@ import { CanonicalServerEvent, normalizeServerEvent, parseServerEvent } from './
 describe('normalizeServerEvent', () => {
   it('collapses both audio delta variants to a single canonical event', () => {
     expect(normalizeServerEvent('response.audio.delta')).toBe(CanonicalServerEvent.AudioDelta)
-    expect(normalizeServerEvent('response.output_audio.delta')).toBe(CanonicalServerEvent.AudioDelta)
+    expect(normalizeServerEvent('response.output_audio.delta')).toBe(
+      CanonicalServerEvent.AudioDelta,
+    )
   })
 
   it('collapses both transcript delta variants to a single canonical event', () => {
