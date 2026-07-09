@@ -122,6 +122,18 @@ function createRealtimeSession() {
     },
   )
 
+  // A realtime error (or a remote close) leaves the socket unusable. Release the
+  // microphone automatically so the recorder never gets stuck in a state the
+  // control bar can no longer toggle off.
+  watch(
+    () => connection.status,
+    (status) => {
+      if ((status === 'error' || status === 'closed') && micState.value === 'recording') {
+        void stopMic()
+      }
+    },
+  )
+
   onScopeDispose(() => {
     void recorder.stop()
     player.dispose()

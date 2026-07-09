@@ -27,4 +27,10 @@ describe('model catalog', () => {
     expect(getModelProfile('gpt-realtime').temperature.scope).toBe('response')
     expect(getModelProfile('gpt-4o-realtime-preview').temperature.scope).toBe('session')
   })
+
+  it('marks gpt-realtime-2 as not supporting the temperature parameter', () => {
+    const profile = getModelProfile('gpt-realtime-2')
+    expect(profile.temperature.supported).toBe(false)
+    expect(getModelProfile('gpt-realtime').temperature.supported).toBe(true)
+  })
 })

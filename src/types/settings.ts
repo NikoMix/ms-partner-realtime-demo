@@ -83,7 +83,7 @@ const DEFAULT_INSTRUCTIONS =
 export function createDefaultSessionSettings(profile: ModelCapabilityProfile): SessionSettings {
   return {
     instructions: DEFAULT_INSTRUCTIONS,
-    outputModalities: ['audio', 'text'],
+    outputModalities: ['audio'],
     temperature: profile.temperature.default,
     maxOutputTokens: profile.maxOutputTokens.default,
     toolChoice: 'auto',

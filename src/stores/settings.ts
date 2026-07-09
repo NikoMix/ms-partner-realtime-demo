@@ -104,9 +104,12 @@ export const useSettingsStore = defineStore('settings', () => {
       target.temperature.min,
       target.temperature.max,
     )
-    if (session.outputModalities.length === 0) {
-      session.outputModalities = ['audio', 'text']
-    }
+    // Audio and text output are mutually exclusive on the wire; collapse any
+    // empty or stale multi-value selection down to a single modality.
+    session.outputModalities =
+      session.outputModalities.includes('text') && !session.outputModalities.includes('audio')
+        ? ['text']
+        : ['audio']
   }
 
   // -- Actions ---------------------------------------------------------------

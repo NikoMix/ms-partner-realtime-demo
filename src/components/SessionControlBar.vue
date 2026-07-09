@@ -10,7 +10,7 @@ const settings = useSettingsStore()
 
 const isRecording = computed(() => session.micState.value === 'recording')
 const isManualTurn = computed(() => settings.session.turnDetection.type === 'none')
-const micDisabled = computed(() => !connection.isConnected)
+const micDisabled = computed(() => !connection.isConnected && !isRecording.value)
 const volumePercent = computed(() => Math.round(session.volume.value * 100))
 
 function onToggleMic(): void {

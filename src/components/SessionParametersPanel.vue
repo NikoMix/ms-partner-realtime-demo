@@ -29,6 +29,11 @@ const NOISE_LABELS: Record<NoiseReductionType, string> = {
   far_field: 'Far field (room / laptop mic)',
 }
 
+const MODALITY_LABELS: Record<OutputModality, string> = {
+  audio: 'Audio + transcript',
+  text: 'Text only',
+}
+
 const temperatureNote = computed(() =>
   profile.value.temperature.scope === 'response'
     ? 'Sent on each response.create (GA schema).'
@@ -52,20 +57,20 @@ const maxTokensValue = computed({
   },
 })
 
-function hasModality(modality: OutputModality): boolean {
-  return settings.session.outputModalities.includes(modality)
-}
-
-function toggleModality(modality: OutputModality): void {
-  const current = settings.session.outputModalities
-  if (current.includes(modality)) {
-    if (current.length > 1) {
-      settings.session.outputModalities = current.filter((item) => item !== modality)
-    }
-  } else {
-    settings.session.outputModalities = [...current, modality]
-  }
-}
+/**
+ * Audio and text output are mutually exclusive on the realtime wire (audio
+ * responses already carry a transcript), so the selection is a single choice.
+ */
+const outputMode = computed<OutputModality>({
+  get: () =>
+    settings.session.outputModalities.includes('text') &&
+    !settings.session.outputModalities.includes('audio')
+      ? 'text'
+      : 'audio',
+  set: (mode: OutputModality) => {
+    settings.session.outputModalities = mode === 'text' ? ['text'] : ['audio']
+  },
+})
 
 function onSelectTurnType(event: Event): void {
   settings.session.turnDetection.type = (event.target as HTMLSelectElement)
@@ -94,20 +99,20 @@ function onSelectTurnType(event: Event): void {
 
     <FormField
       v-if="profile.supportsOutputModalities"
-      label="Output modalities"
-      help="At least one must remain selected."
+      label="Output modality"
+      help="Audio replies include a transcript. Audio and text can't be combined."
     >
-      <div class="chips">
+      <div class="chips" role="radiogroup" aria-label="Output modality">
         <label v-for="modality in OUTPUT_MODALITIES" :key="modality" class="chip">
           <input
             :id="`modality-${modality}`"
-            type="checkbox"
+            v-model="outputMode"
+            type="radio"
             class="chip-input"
-            :name="`modality-${modality}`"
-            :checked="hasModality(modality)"
-            @change="toggleModality(modality)"
+            name="output-modality"
+            :value="modality"
           />
-          <span class="chip-label">{{ modality }}</span>
+          <span class="chip-label">{{ MODALITY_LABELS[modality] }}</span>
         </label>
       </div>
     </FormField>
@@ -345,7 +350,6 @@ function onSelectTurnType(event: Event): void {
   cursor: pointer;
   font-size: var(--text-sm);
   font-weight: 600;
-  text-transform: capitalize;
 }
 
 .chip-input {

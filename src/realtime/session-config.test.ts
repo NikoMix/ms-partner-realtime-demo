@@ -42,12 +42,21 @@ describe('buildSessionUpdate', () => {
     expect(payload.type).toBe('session.update')
     expect(session.type).toBe('realtime')
     expect(session.temperature).toBeUndefined()
-    expect(session.output_modalities).toEqual(['audio', 'text'])
+    expect(session.output_modalities).toEqual(['audio'])
     expect(record(input.format).rate).toBe(24_000)
     expect(record(output.format).type).toBe('audio/pcm')
     expect(output.voice).toBe('marin')
     expect(output.speed).toBeCloseTo(1.1)
     expect(session.tools).toEqual(toolSpecs)
+  })
+
+  it('maps a text-only GA selection to output_modalities ["text"]', () => {
+    const config = settings()
+    config.outputModalities = ['text']
+    const payload = buildSessionUpdate(config, getModelProfile('gpt-realtime'), toolSpecs)
+    const session = record(payload.session)
+
+    expect(session.output_modalities).toEqual(['text'])
   })
 
   it('builds the legacy flat session shape with session temperature', () => {
@@ -60,6 +69,7 @@ describe('buildSessionUpdate', () => {
 
     expect(session.input_audio_format).toBe('pcm16')
     expect(session.output_audio_format).toBe('pcm16')
+    expect(session.modalities).toEqual(['text', 'audio'])
     expect(session.temperature).toBeCloseTo(0.9)
     expect(session.max_response_output_tokens).toBe(4096)
     expect(session.tools).toEqual(toolSpecs)

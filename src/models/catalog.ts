@@ -138,6 +138,17 @@ const GA_PROFILE: ModelCapabilityProfile = {
   maxOutputTokens: { cap: 4096, default: 4096 },
 }
 
+/**
+ * GA models that no longer accept a sampling temperature (e.g. the next-gen
+ * GPT-realtime 2 preset). Sending `temperature` on either `session.update` or
+ * `response.create` is rejected by these deployments, so the parameter is
+ * omitted entirely and its UI control is hidden.
+ */
+const GA_PROFILE_NO_TEMPERATURE: ModelCapabilityProfile = {
+  ...GA_PROFILE,
+  temperature: { supported: false, scope: 'none', min: 0.6, max: 1.2, default: 0.8 },
+}
+
 const LEGACY_PROFILE: ModelCapabilityProfile = {
   schema: 'legacy',
   supportsRealtimeAudio: true,
@@ -182,9 +193,9 @@ export const MODEL_PRESETS: readonly RealtimeModelPreset[] = [
     label: 'GPT-realtime 2',
     family: 'gpt-realtime',
     description:
-      'Next-generation GPT realtime preset (forward-compatible). Uses the GA nested session schema; may not be available in every region yet.',
+      'Next-generation GPT realtime preset (forward-compatible). Uses the GA nested session schema and does not accept a sampling temperature; may not be available in every region yet.',
     preview: true,
-    profile: GA_PROFILE,
+    profile: GA_PROFILE_NO_TEMPERATURE,
   },
   {
     id: 'gpt-realtime-mini',

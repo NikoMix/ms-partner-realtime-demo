@@ -1,7 +1,28 @@
 import { REALTIME_SAMPLE_RATE_HZ, type ModelCapabilityProfile } from '@/models/catalog'
 import { ClientEventType } from './events'
+import type { OutputModality } from '@/models/catalog'
 import type { SessionSettings, TurnDetectionSettings } from '@/types/settings'
 import type { RealtimeToolSpec } from '@/types/tools'
+
+/**
+ * Audio and text output are mutually exclusive on the wire: audio responses
+ * already include a text transcript, and the realtime API rejects a request
+ * for both at once. A selection is therefore treated as "text only" only when
+ * text is chosen without audio.
+ */
+function isTextOnly(modalities: readonly OutputModality[]): boolean {
+  return modalities.includes('text') && !modalities.includes('audio')
+}
+
+/** GA schema: a single-element `output_modalities` array (`audio` or `text`). */
+function gaOutputModalities(settings: SessionSettings): string[] {
+  return isTextOnly(settings.outputModalities) ? ['text'] : ['audio']
+}
+
+/** Legacy schema: audio mode returns audio plus a transcript; text disables audio. */
+function legacyModalities(settings: SessionSettings): string[] {
+  return isTextOnly(settings.outputModalities) ? ['text'] : ['text', 'audio']
+}
 
 export function mapTurnDetection(td: TurnDetectionSettings): Record<string, unknown> | null {
   switch (td.type) {
@@ -50,7 +71,7 @@ function buildGaSession(
   return {
     type: 'realtime',
     instructions: settings.instructions,
-    output_modalities: [...settings.outputModalities],
+    output_modalities: gaOutputModalities(settings),
     audio: {
       input: {
         format: { type: 'audio/pcm', rate: REALTIME_SAMPLE_RATE_HZ },
@@ -88,7 +109,7 @@ function buildLegacySession(
   toolSpecs: readonly RealtimeToolSpec[],
 ): Record<string, unknown> {
   return {
-    modalities: [...settings.outputModalities],
+    modalities: legacyModalities(settings),
     instructions: settings.instructions,
     voice: settings.audio.voice,
     input_audio_format: 'pcm16',
