@@ -39,11 +39,9 @@ export type OutputModality = (typeof OUTPUT_MODALITIES)[number]
 export const TOOL_CHOICE_MODES = ['auto', 'none', 'required'] as const
 export type ToolChoiceMode = (typeof TOOL_CHOICE_MODES)[number]
 
-/** Where a sampling temperature is applied for a given model family. */
+/** Where sampling temperature is applied, or `none` when the service manages it. */
 export const TEMPERATURE_SCOPES = ['session', 'response', 'none'] as const
 export type TemperatureScope = (typeof TEMPERATURE_SCOPES)[number]
-
-export const REALTIME_SAMPLE_RATE_HZ = 24_000
 
 // ---------------------------------------------------------------------------
 // Capability profile
@@ -51,7 +49,6 @@ export const REALTIME_SAMPLE_RATE_HZ = 24_000
 
 export interface TemperatureCapability {
   readonly supported: boolean
-  /** In the GA schema temperature is supplied on `response.create`, not the session. */
   readonly scope: TemperatureScope
   readonly min: number
   readonly max: number
@@ -61,6 +58,15 @@ export interface TemperatureCapability {
 export interface TokenCapability {
   readonly cap: number
   readonly default: number
+}
+
+export interface OutputModalityCapability {
+  readonly supported: readonly OutputModality[]
+  readonly default: readonly OutputModality[]
+  /** Maximum number of modalities accepted in one session configuration. */
+  readonly maxSelected: number
+  /** Whether the model allows the user to choose a different output modality. */
+  readonly configurable: boolean
 }
 
 export interface ModelCapabilityProfile {
@@ -75,8 +81,8 @@ export interface ModelCapabilityProfile {
   readonly supportsNoiseReduction: boolean
   /** GA `audio.output.speed` playback-rate control. */
   readonly supportsSpeed: boolean
-  /** GA `output_modalities` (audio and/or text). */
-  readonly supportsOutputModalities: boolean
+  /** Model-specific valid values for `output_modalities` / legacy `modalities`. */
+  readonly outputModalities: OutputModalityCapability
   readonly temperature: TemperatureCapability
   readonly maxOutputTokens: TokenCapability
 }
@@ -113,16 +119,33 @@ const GA_VOICES = [
   'cedar',
 ] as const
 
-const LEGACY_VOICES = ['alloy', 'echo', 'shimmer', 'ash', 'ballad', 'coral', 'sage', 'verse'] as const
+const LEGACY_VOICES = [
+  'alloy',
+  'echo',
+  'shimmer',
+  'ash',
+  'ballad',
+  'coral',
+  'sage',
+  'verse',
+] as const
 
-const GA_TRANSCRIPTION_MODELS = ['whisper-1', 'gpt-4o-transcribe', 'gpt-4o-mini-transcribe'] as const
-const LEGACY_TRANSCRIPTION_MODELS = ['whisper-1', 'gpt-4o-transcribe', 'gpt-4o-mini-transcribe'] as const
+const GA_TRANSCRIPTION_MODELS = [
+  'whisper-1',
+  'gpt-4o-transcribe',
+  'gpt-4o-mini-transcribe',
+] as const
+const LEGACY_TRANSCRIPTION_MODELS = [
+  'whisper-1',
+  'gpt-4o-transcribe',
+  'gpt-4o-mini-transcribe',
+] as const
 
 // ---------------------------------------------------------------------------
 // Capability profiles
 // ---------------------------------------------------------------------------
 
-const GA_PROFILE: ModelCapabilityProfile = {
+const GA_AUDIO_ONLY_PROFILE: ModelCapabilityProfile = {
   schema: 'ga',
   supportsRealtimeAudio: true,
   voices: GA_VOICES,
@@ -133,9 +156,24 @@ const GA_PROFILE: ModelCapabilityProfile = {
   supportsSemanticVad: true,
   supportsNoiseReduction: true,
   supportsSpeed: true,
-  supportsOutputModalities: true,
-  temperature: { supported: true, scope: 'response', min: 0.6, max: 1.2, default: 0.8 },
+  outputModalities: {
+    supported: ['audio'],
+    default: ['audio'],
+    maxSelected: 1,
+    configurable: false,
+  },
+  temperature: { supported: false, scope: 'none', min: 1, max: 1, default: 1 },
   maxOutputTokens: { cap: 4096, default: 4096 },
+}
+
+const GA_SINGLE_OUTPUT_PROFILE: ModelCapabilityProfile = {
+  ...GA_AUDIO_ONLY_PROFILE,
+  outputModalities: {
+    supported: ['audio', 'text'],
+    default: ['audio'],
+    maxSelected: 1,
+    configurable: true,
+  },
 }
 
 const LEGACY_PROFILE: ModelCapabilityProfile = {
@@ -149,8 +187,13 @@ const LEGACY_PROFILE: ModelCapabilityProfile = {
   supportsSemanticVad: true,
   supportsNoiseReduction: false,
   supportsSpeed: false,
-  supportsOutputModalities: false,
-  temperature: { supported: true, scope: 'session', min: 0.6, max: 1.2, default: 0.8 },
+  outputModalities: {
+    supported: ['audio', 'text'],
+    default: ['audio', 'text'],
+    maxSelected: 2,
+    configurable: false,
+  },
+  temperature: { supported: true, scope: 'session', min: 0.6, max: 1.2, default: 1 },
   maxOutputTokens: { cap: 4096, default: 4096 },
 }
 
@@ -166,7 +209,7 @@ export const MODEL_PRESETS: readonly RealtimeModelPreset[] = [
     releaseTag: '2025-08-28',
     description:
       'First generally available GPT realtime model. Nested GA session schema with full audio input/output, semantic VAD, noise reduction, and playback speed control.',
-    profile: GA_PROFILE,
+    profile: GA_AUDIO_ONLY_PROFILE,
   },
   {
     id: 'gpt-realtime-1.5',
@@ -175,16 +218,16 @@ export const MODEL_PRESETS: readonly RealtimeModelPreset[] = [
     releaseTag: '2026-02-23',
     description:
       'Iterative GPT realtime update with improved turn-taking and transcription. Uses the GA nested session schema.',
-    profile: GA_PROFILE,
+    profile: GA_AUDIO_ONLY_PROFILE,
   },
   {
     id: 'gpt-realtime-2',
     label: 'GPT-realtime 2',
     family: 'gpt-realtime',
     description:
-      'Next-generation GPT realtime preset (forward-compatible). Uses the GA nested session schema; may not be available in every region yet.',
+      'Next-generation GPT realtime preset with one selectable audio or text output modality per session. May not be available in every region yet.',
     preview: true,
-    profile: GA_PROFILE,
+    profile: GA_SINGLE_OUTPUT_PROFILE,
   },
   {
     id: 'gpt-realtime-mini',
@@ -192,7 +235,7 @@ export const MODEL_PRESETS: readonly RealtimeModelPreset[] = [
     family: 'gpt-realtime',
     description:
       'Cost-efficient GPT realtime variant using the GA nested session schema. Ideal for lightweight voice experiences.',
-    profile: GA_PROFILE,
+    profile: GA_AUDIO_ONLY_PROFILE,
   },
   {
     id: 'gpt-4o-realtime-preview',
@@ -207,8 +250,7 @@ export const MODEL_PRESETS: readonly RealtimeModelPreset[] = [
     id: 'gpt-4o-mini-realtime-preview',
     label: 'GPT-4o mini realtime (legacy preview)',
     family: 'gpt-4o-realtime',
-    description:
-      'Legacy cost-efficient preview model using the flat session schema.',
+    description: 'Legacy cost-efficient preview model using the flat session schema.',
     recommendedApiVersion: '2025-04-01-preview',
     profile: LEGACY_PROFILE,
   },

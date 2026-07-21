@@ -23,8 +23,31 @@ describe('model catalog', () => {
     expect(getModelProfile('gpt-4o-realtime-preview').schema).toBe('legacy')
   })
 
-  it('places temperature on the response for GA and on the session for legacy', () => {
-    expect(getModelProfile('gpt-realtime').temperature.scope).toBe('response')
+  it('omits service-managed GA temperature and configures legacy temperature on the session', () => {
+    expect(getModelProfile('gpt-realtime').temperature).toMatchObject({
+      supported: false,
+      scope: 'none',
+    })
     expect(getModelProfile('gpt-4o-realtime-preview').temperature.scope).toBe('session')
+  })
+
+  it('uses model-specific output modality capabilities', () => {
+    expect(getModelProfile('gpt-realtime').outputModalities).toEqual({
+      supported: ['audio'],
+      default: ['audio'],
+      maxSelected: 1,
+      configurable: false,
+    })
+    expect(getModelProfile('gpt-realtime-2').outputModalities).toEqual({
+      supported: ['audio', 'text'],
+      default: ['audio'],
+      maxSelected: 1,
+      configurable: true,
+    })
+  })
+
+  it('defaults temperature to 1', () => {
+    expect(getModelProfile('gpt-realtime').temperature.default).toBe(1)
+    expect(getModelProfile('gpt-4o-realtime-preview').temperature.default).toBe(1)
   })
 })

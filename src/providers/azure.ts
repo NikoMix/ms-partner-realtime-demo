@@ -1,34 +1,53 @@
 import { PROVIDER_DESCRIPTORS, type ProviderDescriptor, type RealtimeProvider } from './types'
 import { redactUrl as redactUrlSecret } from '@/utils/redact'
 
-function normaliseEndpoint(endpoint: string): URL {
-  const trimmed = stripTrailingSlashes(endpoint.trim())
+export interface AzureRealtimeEndpoint {
+  readonly endpoint: string
+  readonly model: string | null
+  readonly deployment: string | null
+  readonly apiVersion: string | null
+}
+
+export function parseAzureRealtimeEndpoint(endpoint: string): AzureRealtimeEndpoint {
+  const trimmed = endpoint.trim()
   if (trimmed.length === 0) {
     throw new Error('Realtime endpoint is required.')
   }
 
-  const withScheme = trimmed.includes('://') ? trimmed : `wss://${trimmed}`
-  const lowerCaseEndpoint = withScheme.toLowerCase()
-  let websocketEndpoint = withScheme
-  if (lowerCaseEndpoint.startsWith('https://')) {
-    websocketEndpoint = `wss://${withScheme.slice('https://'.length)}`
-  } else if (lowerCaseEndpoint.startsWith('http://')) {
-    websocketEndpoint = `ws://${withScheme.slice('http://'.length)}`
-  }
-
+  const withScheme = trimmed.includes('://') ? trimmed : `https://${trimmed}`
+  let parsed: URL
   try {
-    return new URL(websocketEndpoint)
+    parsed = new URL(withScheme)
   } catch {
     throw new Error('Realtime endpoint must be a valid URL.')
   }
+
+  if ((parsed.protocol !== 'https:' && parsed.protocol !== 'wss:') || !parsed.hostname) {
+    throw new Error('Azure Realtime endpoints must use HTTPS or WSS.')
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error('Realtime endpoint must not contain embedded credentials.')
+  }
+
+  return {
+    endpoint: `${parsed.protocol}//${parsed.host}`,
+    model: readQueryValue(parsed, 'model'),
+    deployment: readQueryValue(parsed, 'deployment'),
+    apiVersion: readQueryValue(parsed, 'api-version'),
+  }
 }
 
-function stripTrailingSlashes(value: string): string {
-  let end = value.length
-  while (end > 0 && value.charAt(end - 1) === '/') {
-    end -= 1
+function readQueryValue(url: URL, name: string): string | null {
+  const value = url.searchParams.get(name)?.trim()
+  return value ? value : null
+}
+
+function toWebSocketEndpoint(endpoint: string): URL {
+  const parsed = new URL(endpoint)
+  if (parsed.protocol === 'https:') {
+    parsed.protocol = 'wss:'
   }
-  return value.slice(0, end)
+  return parsed
 }
 
 function requireDeployment(deployment: string): string {
@@ -51,8 +70,11 @@ export function createAzureProvider(descriptor: ProviderDescriptor): RealtimePro
   return {
     descriptor,
     buildRealtimeUrl(params) {
-      const endpoint = normaliseEndpoint(params.endpoint)
-      const deployment = requireDeployment(params.deployment)
+      const parsedEndpoint = parseAzureRealtimeEndpoint(params.endpoint)
+      const endpoint = toWebSocketEndpoint(parsedEndpoint.endpoint)
+      const deployment = requireDeployment(
+        parsedEndpoint.model ?? parsedEndpoint.deployment ?? params.deployment,
+      )
 
       endpoint.pathname = params.schema === 'ga' ? '/openai/v1/realtime' : '/openai/realtime'
       endpoint.search = ''
@@ -61,7 +83,10 @@ export function createAzureProvider(descriptor: ProviderDescriptor): RealtimePro
       if (params.schema === 'ga') {
         endpoint.searchParams.set('model', deployment)
       } else {
-        endpoint.searchParams.set('api-version', requireLegacyApiVersion(params.apiVersion))
+        endpoint.searchParams.set(
+          'api-version',
+          requireLegacyApiVersion(parsedEndpoint.apiVersion ?? params.apiVersion),
+        )
         endpoint.searchParams.set('deployment', deployment)
       }
       endpoint.searchParams.set('api-key', params.apiKey)

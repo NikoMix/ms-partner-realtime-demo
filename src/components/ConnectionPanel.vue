@@ -40,19 +40,48 @@ function onSelectModel(event: Event): void {
   settings.setModelPreset((event.target as HTMLSelectElement).value)
 }
 
+function onEndpointInput(event: Event): void {
+  const input = event.target as HTMLInputElement
+  input.setCustomValidity('')
+}
+
+function onEndpointChange(event: Event): void {
+  const input = event.target as HTMLInputElement
+  try {
+    settings.applyEndpointInput(input.value)
+    input.setCustomValidity('')
+  } catch (error) {
+    input.setCustomValidity(
+      error instanceof Error ? error.message : 'Realtime endpoint must be a valid URL.',
+    )
+    input.reportValidity()
+  }
+}
+
 function onConnect(): void {
+  try {
+    settings.applyEndpointInput()
+  } catch (error) {
+    connection.setError(
+      error instanceof Error ? error.message : 'Realtime endpoint must be a valid URL.',
+    )
+    return
+  }
   if (canConnect.value) {
     void session.connect()
   }
 }
 
 function onDisconnect(): void {
-  session.disconnect()
+  void session.disconnect()
 }
 </script>
 
 <template>
-  <PanelCard title="Connection" subtitle="Choose a provider and model, then enter your endpoint and key.">
+  <PanelCard
+    title="Connection"
+    subtitle="Choose a provider and model, then enter your endpoint and key."
+  >
     <template #actions>
       <span :class="statusMeta.cls">
         <span class="badge-dot" aria-hidden="true" />
@@ -61,14 +90,28 @@ function onDisconnect(): void {
     </template>
 
     <form class="connection-form" autocomplete="off" @submit.prevent="onConnect">
-      <FormField label="Inference provider" input-id="provider-select" :help="settings.providerDescriptor.description">
-        <select id="provider-select" :value="settings.providerId" @change="onSelectProvider">
+      <FormField
+        label="Inference provider"
+        input-id="provider-select"
+        :help="settings.providerDescriptor.description"
+      >
+        <select
+          id="provider-select"
+          :value="settings.providerId"
+          :disabled="connection.isActive"
+          @change="onSelectProvider"
+        >
           <option v-for="p in PROVIDER_LIST" :key="p.id" :value="p.id">{{ p.label }}</option>
         </select>
       </FormField>
 
       <FormField label="Model" input-id="model-select" :help="settings.modelPreset.description">
-        <select id="model-select" :value="settings.modelPresetId" @change="onSelectModel">
+        <select
+          id="model-select"
+          :value="settings.modelPresetId"
+          :disabled="connection.isActive"
+          @change="onSelectModel"
+        >
           <option v-for="preset in settings.presets" :key="preset.id" :value="preset.id">
             {{ preset.label }}{{ preset.preview ? ' (preview)' : '' }}
           </option>
@@ -91,7 +134,11 @@ function onDisconnect(): void {
           type="url"
           autocomplete="off"
           spellcheck="false"
+          required
+          :disabled="connection.isActive"
           :placeholder="settings.providerDescriptor.endpointPlaceholder"
+          @input="onEndpointInput"
+          @change="onEndpointChange"
         />
       </FormField>
 
@@ -106,6 +153,7 @@ function onDisconnect(): void {
           type="text"
           autocomplete="off"
           spellcheck="false"
+          :disabled="connection.isActive"
           :placeholder="settings.modelPresetId"
         />
       </FormField>
@@ -118,6 +166,8 @@ function onDisconnect(): void {
             :type="showKey ? 'text' : 'password'"
             autocomplete="off"
             spellcheck="false"
+            required
+            :disabled="connection.isActive"
             placeholder="Your API key (kept in memory only)"
           />
           <button
@@ -143,6 +193,7 @@ function onDisconnect(): void {
           type="text"
           autocomplete="off"
           spellcheck="false"
+          :disabled="connection.isActive"
           placeholder="2025-04-01-preview"
         />
       </FormField>

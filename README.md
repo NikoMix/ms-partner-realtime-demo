@@ -7,7 +7,8 @@ Realtime Audio Studio is a static Vue 3 + TypeScript + Vite PWA for testing Azur
 
 ## Features
 
-- Captures microphone audio and streams PCM16 at 24 kHz over WebSocket.
+- Captures PCM16 microphone audio at 24 kHz or transcodes it in an AudioWorklet to
+  G.711 mu-law / A-law at 8 kHz for telephony accuracy testing.
 - Plays model audio responses through a user-selectable speaker.
 - Supports Azure AI Foundry and Azure OpenAI realtime audio endpoints.
 - Includes GitHub Models as a REST-inference-only provider with realtime UX gated/disabled.
@@ -27,9 +28,9 @@ Realtime Audio Studio is a static Vue 3 + TypeScript + Vite PWA for testing Azur
 
 | Model preset | Deployment/model id | Schema family | Notes |
 | --- | --- | --- | --- |
-| GPT-realtime 1 | `gpt-realtime` | GA nested session schema | General-availability realtime model. |
-| GPT-realtime 1.5 | `gpt-realtime-1.5` | GA nested session schema | General-availability realtime model. |
-| GPT-realtime 2 | `gpt-realtime-2` | GA nested session schema | Forward-compatible preview preset. |
+| GPT-realtime 1 | `gpt-realtime` | GA nested session schema | General-availability realtime model with audio output. |
+| GPT-realtime 1.5 | `gpt-realtime-1.5` | GA nested session schema | General-availability realtime model with audio output. |
+| GPT-realtime 2 | `gpt-realtime-2` | GA nested session schema | Preview model with one selectable audio or text output modality. |
 | GPT-realtime mini | `gpt-realtime-mini` | GA nested session schema | Smaller realtime preset. |
 | GPT-4o realtime preview | `gpt-4o-realtime-preview` | Legacy flat session schema | Legacy preview compatibility path. |
 
@@ -46,14 +47,15 @@ Open the local Vite URL, then use the app from a secure context (`localhost` is 
 
 ## Usage walkthrough
 
-1. Enter the endpoint, deployment name, and API key for your chosen Azure realtime endpoint.
+1. Enter the resource endpoint or paste the full portal realtime URI, then provide the API key. A `model` query parameter selects the matching model and deployment automatically.
 2. Pick the provider and model preset.
 3. Configure realtime session parameters for that model.
 4. Allow microphone access when the browser prompts.
 5. Pick an input microphone and, in supported browsers, an output speaker.
 6. Connect and start talking.
-7. Watch the event log for socket events, audio events, session updates, and tool-call messages.
-8. Define stub tools to test model function-call behavior. Stub tools never execute real code and never call external MCP servers.
+7. Adjust session parameters as needed; connected sessions receive changes automatically.
+8. Watch the event log for socket events, audio events, session updates, and tool-call messages.
+9. Define stub tools to test model function-call behavior. Stub tools never execute real code and never call external MCP servers.
 
 ## Configuration and parameters
 
@@ -61,8 +63,9 @@ The UI renders parameters based on each model preset's capability profile. Depen
 
 - Turn detection modes and thresholds.
 - Input transcription models.
+- Microphone input format (PCM16, G.711 mu-law, or G.711 A-law).
 - Voices.
-- Temperature.
+- Temperature for legacy preview models (GA models use service-managed temperature).
 - Input noise reduction.
 - Response speed.
 - Output modalities.

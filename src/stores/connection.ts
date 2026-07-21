@@ -1,13 +1,7 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 
-export type ConnectionStatus =
-  | 'idle'
-  | 'connecting'
-  | 'connected'
-  | 'closing'
-  | 'closed'
-  | 'error'
+export type ConnectionStatus = 'idle' | 'connecting' | 'connected' | 'closing' | 'closed' | 'error'
 
 /**
  * Tracks the lifecycle of the realtime WebSocket connection. The realtime
@@ -33,7 +27,8 @@ export const useConnectionStore = defineStore('connection', () => {
   const isConnected = computed(() => status.value === 'connected')
   const isConnecting = computed(() => status.value === 'connecting')
   const isActive = computed(
-    () => status.value === 'connecting' || status.value === 'connected' || status.value === 'closing',
+    () =>
+      status.value === 'connecting' || status.value === 'connected' || status.value === 'closing',
   )
 
   function setConnecting(urlRedacted: string): void {
@@ -68,6 +63,10 @@ export const useConnectionStore = defineStore('connection', () => {
     errorMessage.value = message
     responseInProgress.value = false
     userSpeaking.value = false
+  }
+
+  function setRecoverableError(message: string): void {
+    errorMessage.value = message
   }
 
   function setSessionId(id: string): void {
@@ -106,6 +105,7 @@ export const useConnectionStore = defineStore('connection', () => {
     setClosing,
     setClosed,
     setError,
+    setRecoverableError,
     setSessionId,
     reset,
   }

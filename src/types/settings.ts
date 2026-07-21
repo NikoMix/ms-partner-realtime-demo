@@ -5,9 +5,9 @@ import {
   type SemanticVadEagerness,
   type ToolChoiceMode,
   type TurnDetectionType,
-  REALTIME_SAMPLE_RATE_HZ,
 } from '@/models/catalog'
 import type { ProviderId } from '@/providers/types'
+import type { InputAudioFormat } from '@/types/audio'
 
 /**
  * User-facing session configuration. This is a superset of both the legacy and
@@ -40,14 +40,14 @@ export interface TranscriptionSettings {
   prompt: string
 }
 
-export interface AudioOutputSettings {
+export interface AudioSettings {
+  /** Microphone encoding sent to the realtime input audio buffer. */
+  inputFormat: InputAudioFormat
   voice: string
   /** GA `audio.output.speed` playback rate (0.25–1.5). */
   speed: number
   /** GA input noise reduction mode. */
   noiseReduction: NoiseReductionType
-  inputSampleRate: number
-  outputSampleRate: number
 }
 
 export interface SessionSettings {
@@ -59,7 +59,7 @@ export interface SessionSettings {
   toolChoice: ToolChoiceMode
   turnDetection: TurnDetectionSettings
   transcription: TranscriptionSettings
-  audio: AudioOutputSettings
+  audio: AudioSettings
 }
 
 /**
@@ -83,7 +83,7 @@ const DEFAULT_INSTRUCTIONS =
 export function createDefaultSessionSettings(profile: ModelCapabilityProfile): SessionSettings {
   return {
     instructions: DEFAULT_INSTRUCTIONS,
-    outputModalities: ['audio', 'text'],
+    outputModalities: [...profile.outputModalities.default],
     temperature: profile.temperature.default,
     maxOutputTokens: profile.maxOutputTokens.default,
     toolChoice: 'auto',
@@ -103,11 +103,10 @@ export function createDefaultSessionSettings(profile: ModelCapabilityProfile): S
       prompt: '',
     },
     audio: {
+      inputFormat: 'pcm16',
       voice: profile.defaultVoice,
       speed: 1.0,
       noiseReduction: profile.supportsNoiseReduction ? 'near_field' : 'none',
-      inputSampleRate: REALTIME_SAMPLE_RATE_HZ,
-      outputSampleRate: REALTIME_SAMPLE_RATE_HZ,
     },
   }
 }

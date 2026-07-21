@@ -60,7 +60,7 @@ export const PROVIDER_DESCRIPTORS: Readonly<Record<ProviderId, ProviderDescripto
     supportsRealtimeAudio: true,
     endpointPlaceholder: 'https://<resource>.openai.azure.com',
     endpointHelp:
-      'Your Azure AI Foundry / Azure OpenAI resource endpoint. The deployment name is set separately below.',
+      'Paste a resource endpoint or the full portal realtime URI. A model query parameter selects the matching model automatically.',
     keyHelp:
       'API key for the resource. Held only in memory for this session — never stored, logged, or sent anywhere except your chosen endpoint.',
     docsUrl: 'https://learn.microsoft.com/azure/ai-services/openai/how-to/realtime-audio',
@@ -73,7 +73,7 @@ export const PROVIDER_DESCRIPTORS: Readonly<Record<ProviderId, ProviderDescripto
     supportsRealtimeAudio: true,
     endpointPlaceholder: 'https://<resource>.openai.azure.com',
     endpointHelp:
-      'Your Azure OpenAI resource endpoint. Provide the realtime deployment name separately below.',
+      'Paste a resource endpoint or the full portal realtime URI. A model query parameter selects the matching model automatically.',
     keyHelp:
       'API key for the resource. Held only in memory for this session — never stored, logged, or sent anywhere except your chosen endpoint.',
     docsUrl:

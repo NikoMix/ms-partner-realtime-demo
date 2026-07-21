@@ -10,7 +10,11 @@ const settings = useSettingsStore()
 
 const isRecording = computed(() => session.micState.value === 'recording')
 const isManualTurn = computed(() => settings.session.turnDetection.type === 'none')
-const micDisabled = computed(() => !connection.isConnected)
+const micDisabled = computed(
+  () =>
+    session.micStopping.value ||
+    (!isRecording.value && (!connection.isConnected || session.micFormatLocked.value)),
+)
 const volumePercent = computed(() => Math.round(session.volume.value * 100))
 
 function onToggleMic(): void {
@@ -18,7 +22,7 @@ function onToggleMic(): void {
 }
 
 function onCommit(): void {
-  session.commitAndRespond()
+  void session.commitAndRespond()
 }
 
 function onVolume(event: Event): void {
@@ -75,7 +79,7 @@ function onVolume(event: Event): void {
           v-if="isManualTurn"
           type="button"
           class="btn btn-primary btn-sm"
-          :disabled="micDisabled"
+          :disabled="micDisabled || connection.responseInProgress"
           @click="onCommit"
         >
           Commit &amp; respond

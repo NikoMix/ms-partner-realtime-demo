@@ -19,7 +19,7 @@ The workflow:
 - Runs `npm ci`.
 - Runs `npm run build` with `DEPLOY_TARGET=ghpages`.
 - Uploads `dist`.
-- Deploys with `actions/deploy-pages@v4`.
+- Deploys with `actions/deploy-pages@v5`.
 
 ### Base path caveat
 

@@ -14,11 +14,13 @@ import {
   DEFAULT_PROVIDER_ID,
   getProviderDescriptor,
 } from '@/providers/types'
+import { parseAzureRealtimeEndpoint } from '@/providers/azure'
 import {
   type ProviderConnectionConfig,
   type SessionSettings,
   createDefaultSessionSettings,
 } from '@/types/settings'
+import { isInputAudioFormat } from '@/types/audio'
 import { loadJson, saveJson } from '@/utils/storage'
 
 export type ThemePreference = 'system' | 'light' | 'dark'
@@ -99,14 +101,16 @@ export const useSettingsStore = defineStore('settings', () => {
     if (!target.supportsSpeed) {
       session.audio.speed = 1.0
     }
-    session.temperature = clamp(
-      session.temperature,
-      target.temperature.min,
-      target.temperature.max,
-    )
-    if (session.outputModalities.length === 0) {
-      session.outputModalities = ['audio', 'text']
-    }
+    session.temperature = clamp(session.temperature, target.temperature.min, target.temperature.max)
+    const validModalities = session.outputModalities
+      .filter(
+        (modality, index, modalities) =>
+          target.outputModalities.supported.includes(modality) &&
+          modalities.indexOf(modality) === index,
+      )
+      .slice(0, target.outputModalities.maxSelected)
+    session.outputModalities =
+      validModalities.length > 0 ? validModalities : [...target.outputModalities.default]
   }
 
   // -- Actions ---------------------------------------------------------------
@@ -126,6 +130,22 @@ export const useSettingsStore = defineStore('settings', () => {
     }
     apiVersion.value = next.recommendedApiVersion ?? ''
     reconcileSession(next.profile)
+  }
+
+  function applyEndpointInput(value = endpoint.value): void {
+    const parsed = parseAzureRealtimeEndpoint(value)
+    endpoint.value = parsed.endpoint
+
+    const inferredDeployment = parsed.model ?? parsed.deployment
+    if (inferredDeployment) {
+      if (isKnownPreset(inferredDeployment)) {
+        setModelPreset(inferredDeployment)
+      }
+      deployment.value = inferredDeployment
+    }
+    if (parsed.apiVersion) {
+      apiVersion.value = parsed.apiVersion
+    }
   }
 
   function resetCredentials(): void {
@@ -197,6 +217,7 @@ export const useSettingsStore = defineStore('settings', () => {
     presets: MODEL_PRESETS,
     setProvider,
     setModelPreset,
+    applyEndpointInput,
     resetCredentials,
     resetSessionToDefaults,
   }
@@ -256,6 +277,15 @@ function mergeSession(
     toolChoice: persisted.toolChoice ?? defaults.toolChoice,
     turnDetection: { ...defaults.turnDetection, ...persisted.turnDetection },
     transcription: { ...defaults.transcription, ...persisted.transcription },
-    audio: { ...defaults.audio, ...persisted.audio },
+    audio: {
+      inputFormat: isInputAudioFormat(persisted.audio?.inputFormat)
+        ? persisted.audio.inputFormat
+        : defaults.audio.inputFormat,
+      voice:
+        typeof persisted.audio?.voice === 'string' ? persisted.audio.voice : defaults.audio.voice,
+      speed:
+        typeof persisted.audio?.speed === 'number' ? persisted.audio.speed : defaults.audio.speed,
+      noiseReduction: persisted.audio?.noiseReduction ?? defaults.audio.noiseReduction,
+    },
   }
 }

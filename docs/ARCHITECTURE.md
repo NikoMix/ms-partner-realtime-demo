@@ -30,6 +30,7 @@ The realtime engine owns:
 
 - WebSocket lifecycle.
 - Session creation and update events.
+- Initial configuration after `session.created` and debounced live updates when settings or tools change.
 - Mapping UI session configuration into GA nested or legacy flat schemas.
 - Event normalization for display.
 - Audio append and response-control messages.
@@ -39,7 +40,7 @@ The event normalizer tolerates realtime audio-event name differences across prev
 
 ### Audio engine
 
-The audio layer captures microphone input, converts it to PCM16 at 24 kHz, base64-encodes chunks for WebSocket append events, and plays model audio deltas through a gapless player. It also tracks input and output device selections. Chromium browsers provide the best output-device selection support through `setSinkId`.
+The audio layer captures mono microphone input and encodes preallocated 100 ms chunks in an AudioWorklet. PCM16 uses 24 kHz; optional G.711 mu-law and A-law use 8 kHz browser resampling and one-byte companding for telephony accuracy tests. A streaming worklet resampler covers browsers that cannot create a native 8 kHz audio context. The main thread base64-encodes the transferred chunks for WebSocket append events and plays PCM16 model output through a gapless player. Chromium browsers provide the best output-device selection support through `setSinkId`.
 
 ### Pinia stores
 
@@ -63,8 +64,8 @@ The single-page UI coordinates setup, parameter editing, microphone permissions,
 flowchart LR
   User[User voice] --> Mic[Browser microphone]
   Mic --> Worklet[Audio worklet recorder]
-  Worklet --> PCM[PCM16 24 kHz chunks]
-  PCM --> B64[Base64 encode]
+  Worklet --> Encoded[PCM16 24 kHz or G.711 8 kHz chunks]
+  Encoded --> B64[Base64 encode]
   B64 --> Append[input_audio_buffer.append]
   Append --> WS[Realtime WebSocket]
   WS --> Azure[Azure AI Foundry / Azure OpenAI]

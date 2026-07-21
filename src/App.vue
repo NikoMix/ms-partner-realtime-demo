@@ -81,8 +81,8 @@ const statusMeta = computed(() => {
 
       <footer class="app-footer text-xs text-subtle">
         <span>
-          Model audio streams as PCM16 @ 24&nbsp;kHz. Tools are stubs only — no code or external
-          service is ever executed.
+          Model output is PCM16 @ 24&nbsp;kHz; microphone input can be PCM16 or browser-transcoded
+          G.711. Tools are stubs only — no code or external service is ever executed.
         </span>
       </footer>
     </main>

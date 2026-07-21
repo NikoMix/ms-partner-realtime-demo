@@ -5,7 +5,9 @@ import { RealtimeClient } from '@/realtime/client'
 import { useAudioDevicesStore } from '@/stores/audioDevices'
 import { useConnectionStore } from '@/stores/connection'
 import { useEventLogStore } from '@/stores/eventlog'
-import type { AudioEngineState } from '@/types/audio'
+import { useSettingsStore } from '@/stores/settings'
+import { useToolsStore } from '@/stores/tools'
+import type { AudioEngineState, InputAudioFormat } from '@/types/audio'
 
 /**
  * Integration glue between the audio engine (recorder + player) and the realtime
@@ -19,14 +21,23 @@ function createRealtimeSession() {
   const connection = useConnectionStore()
   const events = useEventLogStore()
   const devices = useAudioDevicesStore()
+  const settings = useSettingsStore()
+  const tools = useToolsStore()
 
   const player = new Pcm16Player()
   const client = new RealtimeClient({ audioSink: player })
   const recorder = new MicRecorder()
 
   const micState = ref<AudioEngineState>('idle')
+  const micFormatLocked = ref(false)
+  const micStopping = ref(false)
   const volume = ref(1)
   const supportsSinkSelection = player.supportsSinkSelection
+  let sessionUpdateTimer: ReturnType<typeof setTimeout> | null = null
+  let activeInputFormat: InputAudioFormat | null = null
+  let microphoneOperationGeneration = 0
+  let stopMicPromise: Promise<void> | null = null
+  let disconnectPromise: Promise<void> | null = null
 
   function logError(type: string, summary: string): void {
     events.add({ direction: 'system', severity: 'error', type, summary })
@@ -47,6 +58,12 @@ function createRealtimeSession() {
     if (connection.isActive) {
       return
     }
+    if (stopMicPromise) {
+      await stopMicPromise
+    }
+    if (connection.isActive) {
+      return
+    }
     // A user gesture reached us, so unlock playback and route to the chosen sink.
     try {
       await player.resume()
@@ -57,43 +74,114 @@ function createRealtimeSession() {
     client.connect()
   }
 
-  function disconnect(): void {
-    void stopMic()
-    client.disconnect()
-    player.clear()
+  function disconnect(): Promise<void> {
+    if (disconnectPromise) {
+      return disconnectPromise
+    }
+
+    // Keep the current socket alive while the recorder delivers its final
+    // acknowledged chunk, but lock the UI against new actions immediately.
+    connection.setClosing()
+    const disconnecting = (async () => {
+      try {
+        await stopMic()
+      } finally {
+        client.disconnect()
+        player.clear()
+      }
+    })().finally(() => {
+      if (disconnectPromise === disconnecting) {
+        disconnectPromise = null
+      }
+    })
+    disconnectPromise = disconnecting
+    return disconnecting
   }
 
   async function startMic(): Promise<void> {
-    if (!connection.isConnected || micState.value === 'recording') {
+    if (!connection.isConnected || micFormatLocked.value) {
       return
     }
+    const inputFormat = settings.session.audio.inputFormat
+    const operationGeneration = ++microphoneOperationGeneration
+    activeInputFormat = inputFormat
+    micFormatLocked.value = true
+
     try {
       await player.resume()
     } catch {
       // Non-fatal; playback context resumes lazily.
     }
+    if (operationGeneration !== microphoneOperationGeneration || !connection.isConnected) {
+      return
+    }
+
+    try {
+      await applySessionUpdateNow()
+    } catch {
+      if (operationGeneration === microphoneOperationGeneration) {
+        activeInputFormat = null
+        micFormatLocked.value = false
+      }
+      return
+    }
+    if (operationGeneration !== microphoneOperationGeneration || !connection.isConnected) {
+      return
+    }
+
     await recorder.start({
       deviceId: devices.selectedInputId || undefined,
-      onChunk: (base64Pcm16: string) => {
-        client.sendAudioChunk(base64Pcm16)
+      inputFormat,
+      onChunk: (base64Audio: string) => {
+        client.sendAudioChunk(base64Audio)
       },
       onStateChange: (state: AudioEngineState) => {
         micState.value = state
+        if (state === 'error') {
+          void stopMic()
+        }
       },
       onError: (error: Error) => {
         logError('audio.recorder.error', error.message)
         devices.setPermission('denied')
       },
     })
+
+    if (operationGeneration !== microphoneOperationGeneration) {
+      return
+    }
+    if (!connection.isConnected) {
+      await stopMic()
+      return
+    }
+
     if (recorder.state === 'recording') {
       devices.setPermission('granted')
       void devices.refreshDevices()
+    } else {
+      activeInputFormat = null
+      micFormatLocked.value = false
     }
   }
 
-  async function stopMic(): Promise<void> {
-    await recorder.stop()
-    micState.value = 'idle'
+  function stopMic(): Promise<void> {
+    microphoneOperationGeneration += 1
+    if (stopMicPromise) {
+      return stopMicPromise
+    }
+
+    micStopping.value = true
+    const stopping = recorder.stop().finally(() => {
+      micState.value = 'idle'
+      activeInputFormat = null
+      micFormatLocked.value = false
+      micStopping.value = false
+      if (stopMicPromise === stopping) {
+        stopMicPromise = null
+      }
+    })
+    stopMicPromise = stopping
+    return stopping
   }
 
   async function toggleMic(): Promise<void> {
@@ -105,7 +193,15 @@ function createRealtimeSession() {
   }
 
   /** Manual turn mode: commit the buffered audio and ask for a response. */
-  function commitAndRespond(): void {
+  async function commitAndRespond(): Promise<void> {
+    if (!connection.isConnected || connection.responseInProgress || micStopping.value) {
+      return
+    }
+
+    await stopMic()
+    if (!connection.isConnected || connection.responseInProgress) {
+      return
+    }
     client.commitInput()
     client.createResponse()
   }
@@ -115,6 +211,56 @@ function createRealtimeSession() {
     player.setVolume(value)
   }
 
+  function scheduleSessionUpdate(): void {
+    if (sessionUpdateTimer !== null) {
+      clearTimeout(sessionUpdateTimer)
+    }
+    sessionUpdateTimer = setTimeout(() => {
+      sessionUpdateTimer = null
+      // RealtimeClient surfaces update failures while preserving recoverable sessions.
+      void client.updateSession().catch(() => undefined)
+    }, 100)
+  }
+
+  function applySessionUpdateNow(): Promise<void> {
+    if (sessionUpdateTimer !== null) {
+      clearTimeout(sessionUpdateTimer)
+      sessionUpdateTimer = null
+    }
+    return client.updateSession()
+  }
+
+  watch([() => settings.session, () => tools.toolSpecs], scheduleSessionUpdate, {
+    deep: true,
+    flush: 'post',
+  })
+
+  watch(
+    () => settings.session.audio.inputFormat,
+    (inputFormat) => {
+      if (!micFormatLocked.value) {
+        if (connection.isConnected) {
+          client.clearInput()
+          scheduleSessionUpdate()
+        }
+        return
+      }
+
+      if (activeInputFormat === null || inputFormat === activeInputFormat) {
+        return
+      }
+
+      settings.session.audio.inputFormat = activeInputFormat
+      events.add({
+        direction: 'system',
+        severity: 'warning',
+        type: 'audio.input_format.locked',
+        summary: 'Stop the microphone before changing its input format.',
+      })
+    },
+    { flush: 'sync' },
+  )
+
   watch(
     () => devices.selectedOutputId,
     () => {
@@ -122,13 +268,27 @@ function createRealtimeSession() {
     },
   )
 
+  watch(
+    () => connection.isConnected,
+    (isConnected) => {
+      if (!isConnected && micFormatLocked.value) {
+        void stopMic()
+      }
+    },
+  )
+
   onScopeDispose(() => {
-    void recorder.stop()
+    if (sessionUpdateTimer !== null) {
+      clearTimeout(sessionUpdateTimer)
+    }
+    void stopMic()
     player.dispose()
   })
 
   return {
     micState,
+    micFormatLocked,
+    micStopping,
     volume,
     supportsSinkSelection,
     connect,

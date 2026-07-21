@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { azureFoundryProvider } from './azure'
+import { azureFoundryProvider, parseAzureRealtimeEndpoint } from './azure'
 import { githubModelsProvider } from './github-models'
 import type { RealtimeConnectionParams } from './types'
 
@@ -46,6 +46,32 @@ describe('azure realtime provider', () => {
     expect(url).toContain('wss://example.openai.azure.com/openai/v1/realtime')
   })
 
+  it('normalizes a portal realtime URI and reads its model', () => {
+    expect(
+      parseAzureRealtimeEndpoint(
+        'https://mixn-moa844yd-swedencentral.cognitiveservices.azure.com/openai/v1/realtime?model=gpt-realtime-2',
+      ),
+    ).toEqual({
+      endpoint: 'https://mixn-moa844yd-swedencentral.cognitiveservices.azure.com',
+      model: 'gpt-realtime-2',
+      deployment: null,
+      apiVersion: null,
+    })
+  })
+
+  it('prefers the model embedded in a full portal realtime URI', () => {
+    const url = new URL(
+      azureFoundryProvider.buildRealtimeUrl(
+        params({
+          endpoint: 'https://example.openai.azure.com/openai/v1/realtime?model=gpt-realtime-2',
+          deployment: 'gpt-realtime',
+        }),
+      ),
+    )
+
+    expect(url.searchParams.get('model')).toBe('gpt-realtime-2')
+  })
+
   it('defaults endpoints without a scheme to wss', () => {
     const url = new URL(
       azureFoundryProvider.buildRealtimeUrl(
@@ -55,6 +81,16 @@ describe('azure realtime provider', () => {
 
     expect(url.protocol).toBe('wss:')
   })
+
+  it.each(['http', 'ws'])(
+    'rejects plaintext %s endpoints that would expose the API key',
+    (protocol) => {
+      const endpoint = `${protocol}://example.openai.azure.com`
+      expect(() => azureFoundryProvider.buildRealtimeUrl(params({ endpoint }))).toThrow(
+        'Azure Realtime endpoints must use HTTPS or WSS.',
+      )
+    },
+  )
 
   it('throws when deployment is empty', () => {
     expect(() => azureFoundryProvider.buildRealtimeUrl(params({ deployment: '   ' }))).toThrow(

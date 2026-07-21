@@ -1,6 +1,5 @@
 import { pcm16Base64ToFloat32 } from './pcm'
-
-const REALTIME_SAMPLE_RATE_HZ = 24000
+import { PCM16_SAMPLE_RATE_HZ } from '@/types/audio'
 
 type AudioContextWithSinkId = AudioContext & {
   setSinkId?: (sinkId: string) => Promise<void>
@@ -138,7 +137,7 @@ export class Pcm16Player {
       throw new Error('Web Audio is unavailable in this browser')
     }
 
-    const audioContext = new AudioContext({ sampleRate: REALTIME_SAMPLE_RATE_HZ })
+    const audioContext = new AudioContext({ sampleRate: PCM16_SAMPLE_RATE_HZ })
     this.audioContext = audioContext
     this.playheadTime = audioContext.currentTime
     this.ensureGainNode(audioContext)

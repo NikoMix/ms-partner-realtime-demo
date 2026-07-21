@@ -1,9 +1,15 @@
 import { describe, expect, it } from 'vitest'
 
 import { getModelProfile } from '@/models/catalog'
+import type { InputAudioFormat } from '@/types/audio'
 import { createDefaultSessionSettings, type SessionSettings } from '@/types/settings'
 import type { RealtimeToolSpec } from '@/types/tools'
-import { buildResponseCreate, buildSessionUpdate, mapTurnDetection } from './session-config'
+import {
+  buildResponseCreate,
+  buildSessionUpdate,
+  mapTurnDetection,
+  resolveOutputModalities,
+} from './session-config'
 
 const toolSpecs: readonly RealtimeToolSpec[] = [
   {
@@ -13,6 +19,11 @@ const toolSpecs: readonly RealtimeToolSpec[] = [
     parameters: { type: 'object' },
   },
 ]
+
+const GA_INPUT_FORMAT_CASES = [
+  ['g711_ulaw', 'audio/pcmu'],
+  ['g711_alaw', 'audio/pcma'],
+] as const satisfies readonly (readonly [InputAudioFormat, string])[]
 
 function record(value: unknown): Record<string, unknown> {
   expect(typeof value).toBe('object')
@@ -32,7 +43,7 @@ function settings(id = 'gpt-realtime'): SessionSettings {
 }
 
 describe('buildSessionUpdate', () => {
-  it('builds the GA nested realtime session shape without session temperature', () => {
+  it('builds the GA nested realtime session shape without unsupported temperature', () => {
     const payload = buildSessionUpdate(settings(), getModelProfile('gpt-realtime'), toolSpecs)
     const session = record(payload.session)
     const audio = record(session.audio)
@@ -42,12 +53,38 @@ describe('buildSessionUpdate', () => {
     expect(payload.type).toBe('session.update')
     expect(session.type).toBe('realtime')
     expect(session.temperature).toBeUndefined()
-    expect(session.output_modalities).toEqual(['audio', 'text'])
+    expect(session.output_modalities).toEqual(['audio'])
+    expect(record(input.format).type).toBe('audio/pcm')
     expect(record(input.format).rate).toBe(24_000)
     expect(record(output.format).type).toBe('audio/pcm')
     expect(output.voice).toBe('marin')
     expect(output.speed).toBeCloseTo(1.1)
     expect(session.tools).toEqual(toolSpecs)
+  })
+
+  it('limits GPT-realtime 2 to one output modality', () => {
+    const current = settings('gpt-realtime-2')
+    current.outputModalities = ['audio', 'text']
+
+    expect(resolveOutputModalities(current, getModelProfile('gpt-realtime-2'))).toEqual(['audio'])
+  })
+
+  it('falls back to audio when an older GA model receives an unsupported text modality', () => {
+    const current = settings('gpt-realtime')
+    current.outputModalities = ['text']
+
+    expect(resolveOutputModalities(current, getModelProfile('gpt-realtime'))).toEqual(['audio'])
+  })
+
+  it.each(GA_INPUT_FORMAT_CASES)('maps %s to GA format %s', (inputFormat, wireType) => {
+    const current = settings()
+    current.audio.inputFormat = inputFormat
+
+    const payload = buildSessionUpdate(current, getModelProfile('gpt-realtime'), toolSpecs)
+    const audio = record(record(payload.session).audio)
+    const input = record(audio.input)
+
+    expect(input.format).toEqual({ type: wireType })
   })
 
   it('builds the legacy flat session shape with session temperature', () => {
@@ -63,6 +100,37 @@ describe('buildSessionUpdate', () => {
     expect(session.temperature).toBeCloseTo(0.9)
     expect(session.max_response_output_tokens).toBe(4096)
     expect(session.tools).toEqual(toolSpecs)
+  })
+
+  it('maps G.711 input to the legacy flat session shape', () => {
+    const current = settings('gpt-4o-realtime-preview')
+    current.audio.inputFormat = 'g711_ulaw'
+
+    const payload = buildSessionUpdate(
+      current,
+      getModelProfile('gpt-4o-realtime-preview'),
+      toolSpecs,
+    )
+
+    expect(record(payload.session).input_audio_format).toBe('g711_ulaw')
+  })
+
+  it('omits immutable voice and turn-bound speed when requested', () => {
+    const gaPayload = buildSessionUpdate(settings(), getModelProfile('gpt-realtime'), toolSpecs, {
+      includeSpeed: false,
+      includeVoice: false,
+    })
+    const legacyPayload = buildSessionUpdate(
+      settings('gpt-4o-realtime-preview'),
+      getModelProfile('gpt-4o-realtime-preview'),
+      toolSpecs,
+      { includeVoice: false },
+    )
+
+    const gaOutput = record(record(record(gaPayload.session).audio).output)
+    expect(gaOutput.voice).toBeUndefined()
+    expect(gaOutput.speed).toBeUndefined()
+    expect(record(legacyPayload.session).voice).toBeUndefined()
   })
 })
 
@@ -106,14 +174,14 @@ describe('mapTurnDetection', () => {
 })
 
 describe('buildResponseCreate', () => {
-  it('includes temperature only when the profile supports response-scoped temperature', () => {
+  it('omits service-managed GA and session-scoped legacy temperature', () => {
     const ga = buildResponseCreate(settings(), getModelProfile('gpt-realtime'))
     const legacy = buildResponseCreate(
       settings('gpt-4o-realtime-preview'),
       getModelProfile('gpt-4o-realtime-preview'),
     )
 
-    expect(record(ga.response).temperature).toBeCloseTo(0.9)
+    expect(ga.response).toEqual({})
     expect(legacy.response).toEqual({})
   })
 })

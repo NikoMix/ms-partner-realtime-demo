@@ -9,7 +9,9 @@ import { RealtimeClient, type RealtimeClientOptions } from './client'
 import type { RealtimeAudioSink } from './audio-sink'
 
 interface ClientPayload {
+  event_id?: string
   type?: string
+  session?: Record<string, unknown>
   item?: {
     type?: string
     call_id?: string
@@ -87,6 +89,10 @@ function payload(raw: string | undefined): ClientPayload {
   return safeParse<ClientPayload>(raw ?? '{}', {})
 }
 
+function acknowledgeSessionUpdate(socket: FakeWebSocket): void {
+  socket.message(JSON.stringify({ type: 'session.updated', session: {} }))
+}
+
 beforeEach(() => {
   localStorage.clear()
   setActivePinia(createPinia())
@@ -94,14 +100,181 @@ beforeEach(() => {
 })
 
 describe('RealtimeClient', () => {
-  it('sends session.update when the socket opens', () => {
+  it('waits for session.created before sending session.update', () => {
     const { client, sockets } = createClient()
     client.connect()
 
     const socket = firstSocket(sockets)
     socket.open()
+    expect(socket.sent).toHaveLength(0)
+    expect(useConnectionStore().status).toBe('connecting')
+    socket.message(JSON.stringify({ type: 'session.created', session: { id: 'session-1' } }))
 
     expect(payload(socket.sent[0]).type).toBe('session.update')
+    expect(payload(socket.sent[0]).event_id).toMatch(/^session-update-/)
+    expect(payload(socket.sent[0]).session?.temperature).toBeUndefined()
+    expect(
+      (payload(socket.sent[0]).session?.audio as { output?: { voice?: string } } | undefined)
+        ?.output?.voice,
+    ).toBe('marin')
+    expect(useConnectionStore().status).toBe('connected')
+    expect(useConnectionStore().sessionId).toBe('session-1')
+    acknowledgeSessionUpdate(socket)
+  })
+
+  it('applies changed settings and waits for session.updated', async () => {
+    const { client, sockets } = createClient()
+    client.connect()
+    const socket = firstSocket(sockets)
+    socket.open()
+    socket.message(JSON.stringify({ type: 'session.created', session: { id: 'session-1' } }))
+    acknowledgeSessionUpdate(socket)
+
+    useSettingsStore().session.instructions = 'Use the latest instructions.'
+    let acknowledged = false
+    const update = client.updateSession().then(() => {
+      acknowledged = true
+    })
+    await Promise.resolve()
+
+    const latest = payload(socket.sent.at(-1))
+    expect(latest.type).toBe('session.update')
+    expect((latest as { session?: { instructions?: string } }).session?.instructions).toBe(
+      'Use the latest instructions.',
+    )
+    expect(
+      (latest.session?.audio as { output?: { voice?: string } } | undefined)?.output?.voice,
+    ).toBeUndefined()
+    expect(acknowledged).toBe(false)
+
+    acknowledgeSessionUpdate(socket)
+    await update
+    expect(acknowledged).toBe(true)
+  })
+
+  it('queues the latest settings while a session update is in flight', async () => {
+    const { client, sockets } = createClient()
+    client.connect()
+    const socket = firstSocket(sockets)
+    socket.open()
+    socket.message(JSON.stringify({ type: 'session.created', session: {} }))
+
+    useSettingsStore().session.instructions = 'Queued instructions.'
+    const queuedUpdate = client.updateSession()
+    expect(socket.sent).toHaveLength(1)
+
+    acknowledgeSessionUpdate(socket)
+    expect(socket.sent).toHaveLength(2)
+    expect(
+      (payload(socket.sent[1]) as { session?: { instructions?: string } }).session?.instructions,
+    ).toBe('Queued instructions.')
+
+    acknowledgeSessionUpdate(socket)
+    await expect(queuedUpdate).resolves.toBeUndefined()
+  })
+
+  it('sends the selected voice when a text-only session later switches to audio', async () => {
+    const settings = useSettingsStore()
+    settings.setModelPreset('gpt-realtime-2')
+    settings.session.outputModalities = ['text']
+    const { client, sockets } = createClient()
+    client.connect()
+    const socket = firstSocket(sockets)
+    socket.open()
+    socket.message(JSON.stringify({ type: 'session.created', session: {} }))
+
+    const initialOutput = (
+      payload(socket.sent.at(-1)).session?.audio as { output?: { voice?: string } } | undefined
+    )?.output
+    expect(initialOutput).toBeUndefined()
+    acknowledgeSessionUpdate(socket)
+
+    settings.session.outputModalities = ['audio']
+    const update = client.updateSession()
+    const audioOutput = (
+      payload(socket.sent.at(-1)).session?.audio as { output?: { voice?: string } } | undefined
+    )?.output
+    expect(audioOutput?.voice).toBe('marin')
+
+    acknowledgeSessionUpdate(socket)
+    await expect(update).resolves.toBeUndefined()
+  })
+
+  it('omits unchanged speed from live updates during an active response', async () => {
+    const { client, sockets } = createClient()
+    client.connect()
+    const socket = firstSocket(sockets)
+    socket.open()
+    socket.message(JSON.stringify({ type: 'session.created', session: {} }))
+    acknowledgeSessionUpdate(socket)
+    socket.message(JSON.stringify({ type: 'response.created', response: { id: 'resp-1' } }))
+
+    useSettingsStore().session.instructions = 'Apply this during the response.'
+    const update = client.updateSession()
+    const output = (
+      payload(socket.sent.at(-1)).session?.audio as { output?: { speed?: number } } | undefined
+    )?.output
+    expect(output?.speed).toBeUndefined()
+
+    acknowledgeSessionUpdate(socket)
+    await expect(update).resolves.toBeUndefined()
+  })
+
+  it('defers changed speed until the active response completes', async () => {
+    const { client, sockets } = createClient()
+    client.connect()
+    const socket = firstSocket(sockets)
+    socket.open()
+    socket.message(JSON.stringify({ type: 'session.created', session: {} }))
+    acknowledgeSessionUpdate(socket)
+    client.createResponse()
+    expect(useConnectionStore().responseInProgress).toBe(true)
+    expect(payload(socket.sent.at(-1)).event_id).toMatch(/^response-create-/)
+
+    useSettingsStore().session.audio.speed = 1.2
+    const sentBeforeUpdate = socket.sent.length
+    const update = client.updateSession()
+    expect(socket.sent).toHaveLength(sentBeforeUpdate)
+
+    socket.message(JSON.stringify({ type: 'response.done', response: { id: 'resp-1' } }))
+    const output = (
+      payload(socket.sent.at(-1)).session?.audio as { output?: { speed?: number } } | undefined
+    )?.output
+    expect(output?.speed).toBeCloseTo(1.2)
+
+    acknowledgeSessionUpdate(socket)
+    await expect(update).resolves.toBeUndefined()
+  })
+
+  it('clears a rejected response and resumes a deferred speed update', async () => {
+    const { client, sockets } = createClient()
+    client.connect()
+    const socket = firstSocket(sockets)
+    socket.open()
+    socket.message(JSON.stringify({ type: 'session.created', session: {} }))
+    acknowledgeSessionUpdate(socket)
+
+    client.createResponse()
+    const responseEventId = payload(socket.sent.at(-1)).event_id
+    useSettingsStore().session.audio.speed = 1.2
+    const update = client.updateSession()
+    socket.message(
+      JSON.stringify({
+        type: 'error',
+        error: { message: 'Response rejected', event_id: responseEventId },
+      }),
+    )
+
+    expect(useConnectionStore().responseInProgress).toBe(false)
+    expect(useConnectionStore().status).toBe('connected')
+    expect(socket.readyState).toBe(1)
+    const output = (
+      payload(socket.sent.at(-1)).session?.audio as { output?: { speed?: number } } | undefined
+    )?.output
+    expect(output?.speed).toBeCloseTo(1.2)
+
+    acknowledgeSessionUpdate(socket)
+    await expect(update).resolves.toBeUndefined()
   })
 
   it('stubs function calls and sends function_call_output followed by response.create', () => {
@@ -118,6 +291,8 @@ describe('RealtimeClient', () => {
     client.connect()
     const socket = firstSocket(sockets)
     socket.open()
+    socket.message(JSON.stringify({ type: 'session.created', session: {} }))
+    acknowledgeSessionUpdate(socket)
 
     socket.message(
       JSON.stringify({
@@ -139,7 +314,7 @@ describe('RealtimeClient', () => {
     expect(functionOutput?.item?.type).toBe('function_call_output')
     expect(functionOutput?.item?.call_id).toBe('call-1')
     expect(functionOutput?.item?.output).toBe('{"ok":true}')
-    expect(responseCreate?.response?.temperature).toBeCloseTo(0.8)
+    expect(responseCreate?.response).toEqual({})
   })
 
   it('defers the tool-result response.create until the active response completes', () => {
@@ -156,6 +331,8 @@ describe('RealtimeClient', () => {
     client.connect()
     const socket = firstSocket(sockets)
     socket.open()
+    socket.message(JSON.stringify({ type: 'session.created', session: {} }))
+    acknowledgeSessionUpdate(socket)
 
     // A response is already streaming when the function call arrives.
     socket.message(JSON.stringify({ type: 'response.created', response: { id: 'resp-1' } }))
@@ -180,7 +357,72 @@ describe('RealtimeClient', () => {
       .map((entry) => payload(entry))
       .filter((entry) => entry.type === 'response.create')
     expect(responseCreates).toHaveLength(1)
-    expect(responseCreates[0]?.response?.temperature).toBeCloseTo(0.8)
+    expect(responseCreates[0]?.response).toEqual({})
+  })
+
+  it('continues a tool-result turn after a recoverable session update failure', async () => {
+    const tools = useToolsStore()
+    const tool = tools.addTool()
+    tools.updateTool(tool.id, {
+      name: 'lookup_order',
+      description: 'Look up an order.',
+      parametersJson: '{"type":"object"}',
+      stubResponseJson: '{"ok":true}',
+      enabled: true,
+    })
+    const { client, sockets } = createClient()
+    client.connect()
+    const socket = firstSocket(sockets)
+    socket.open()
+    socket.message(JSON.stringify({ type: 'session.created', session: {} }))
+    acknowledgeSessionUpdate(socket)
+    socket.message(JSON.stringify({ type: 'response.created', response: { id: 'resp-1' } }))
+    socket.message(
+      JSON.stringify({
+        type: 'response.function_call_arguments.done',
+        call_id: 'call-1',
+        name: 'lookup_order',
+        arguments: '{"orderId":"42"}',
+      }),
+    )
+
+    useSettingsStore().session.instructions = 'This update will be rejected.'
+    const update = client.updateSession()
+    const updateEventId = payload(socket.sent.at(-1)).event_id
+    const rejected = expect(update).rejects.toThrow('Invalid live setting')
+    socket.message(JSON.stringify({ type: 'response.done', response: { id: 'resp-1' } }))
+    socket.message(
+      JSON.stringify({
+        type: 'error',
+        error: { message: 'Invalid live setting', event_id: updateEventId },
+      }),
+    )
+
+    await rejected
+    expect(payload(socket.sent.at(-1)).type).toBe('response.create')
+    expect(useConnectionStore().responseInProgress).toBe(true)
+    expect(useConnectionStore().status).toBe('connected')
+
+    const firstResponseEventId = payload(socket.sent.at(-1)).event_id
+    socket.message(
+      JSON.stringify({
+        type: 'error',
+        error: { message: 'Transient response failure', event_id: firstResponseEventId },
+      }),
+    )
+    const retryResponseEventId = payload(socket.sent.at(-1)).event_id
+    expect(retryResponseEventId).toMatch(/^response-create-/)
+    expect(retryResponseEventId).not.toBe(firstResponseEventId)
+
+    socket.message(
+      JSON.stringify({
+        type: 'error',
+        error: { message: 'Persistent response failure', event_id: retryResponseEventId },
+      }),
+    )
+    const sentBeforeManualResponse = socket.sent.length
+    client.createResponse()
+    expect(socket.sent).toHaveLength(sentBeforeManualResponse + 1)
   })
 
   it('forwards audio deltas to the audio sink', () => {
@@ -193,20 +435,70 @@ describe('RealtimeClient', () => {
     client.connect()
     const socket = firstSocket(sockets)
     socket.open()
+    socket.message(JSON.stringify({ type: 'session.created', session: {} }))
+    acknowledgeSessionUpdate(socket)
 
     socket.message(JSON.stringify({ type: 'response.audio.delta', delta: 'base64-audio' }))
 
     expect(enqueue).toHaveBeenCalledWith('base64-audio')
   })
 
-  it('sets connection errors from realtime error events', () => {
+  it('rejects a matching session update error without closing the socket', async () => {
     const { client, sockets } = createClient()
     client.connect()
     const socket = firstSocket(sockets)
     socket.open()
+    socket.message(JSON.stringify({ type: 'session.created', session: {} }))
+    acknowledgeSessionUpdate(socket)
 
-    socket.message(JSON.stringify({ type: 'error', error: { message: 'boom' } }))
+    const update = client.updateSession()
+    const updateEventId = payload(socket.sent.at(-1)).event_id
+    expect(updateEventId).toMatch(/^session-update-/)
 
+    socket.message(
+      JSON.stringify({
+        type: 'error',
+        error: { message: 'boom', event_id: updateEventId },
+      }),
+    )
+
+    await expect(update).rejects.toThrow('boom')
     expect(useConnectionStore().errorMessage).toBe('boom')
+    expect(useConnectionStore().status).toBe('connected')
+    expect(socket.readyState).toBe(1)
+
+    const retry = client.updateSession()
+    acknowledgeSessionUpdate(socket)
+    await expect(retry).resolves.toBeUndefined()
+  })
+
+  it('keeps a session update pending when a recoverable error belongs to another event', async () => {
+    const { client, sockets } = createClient()
+    client.connect()
+    const socket = firstSocket(sockets)
+    socket.open()
+    socket.message(JSON.stringify({ type: 'session.created', session: {} }))
+    acknowledgeSessionUpdate(socket)
+
+    let acknowledged = false
+    const update = client.updateSession().then(() => {
+      acknowledged = true
+    })
+    socket.message(
+      JSON.stringify({
+        type: 'error',
+        error: { message: 'Bad audio chunk', event_id: 'audio-append-1' },
+      }),
+    )
+    await Promise.resolve()
+
+    expect(acknowledged).toBe(false)
+    expect(useConnectionStore().status).toBe('connected')
+    expect(useConnectionStore().errorMessage).toBe('Bad audio chunk')
+    expect(socket.readyState).toBe(1)
+
+    acknowledgeSessionUpdate(socket)
+    await update
+    expect(acknowledged).toBe(true)
   })
 })

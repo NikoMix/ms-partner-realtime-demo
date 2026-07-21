@@ -3,10 +3,12 @@ import { computed } from 'vue'
 import PanelCard from '@/components/ui/PanelCard.vue'
 import FormField from '@/components/ui/FormField.vue'
 import ToggleSwitch from '@/components/ui/ToggleSwitch.vue'
+import { useRealtimeSession } from '@/composables/useRealtimeSession'
+import { useConnectionStore } from '@/stores/connection'
 import { useSettingsStore } from '@/stores/settings'
+import { INPUT_AUDIO_FORMATS, type InputAudioFormat } from '@/types/audio'
 import {
   NOISE_REDUCTION_TYPES,
-  OUTPUT_MODALITIES,
   SEMANTIC_VAD_EAGERNESS,
   TOOL_CHOICE_MODES,
   type NoiseReductionType,
@@ -15,7 +17,10 @@ import {
 } from '@/models/catalog'
 
 const settings = useSettingsStore()
+const connection = useConnectionStore()
+const realtimeSession = useRealtimeSession()
 const profile = computed(() => settings.profile)
+const isInputFormatLocked = computed(() => realtimeSession.micFormatLocked.value)
 
 const TURN_LABELS: Record<TurnDetectionType, string> = {
   server_vad: 'Server VAD (automatic)',
@@ -28,6 +33,23 @@ const NOISE_LABELS: Record<NoiseReductionType, string> = {
   near_field: 'Near field (headset / close mic)',
   far_field: 'Far field (room / laptop mic)',
 }
+
+const INPUT_FORMAT_LABELS: Record<InputAudioFormat, string> = {
+  pcm16: 'PCM16 - 24 kHz (baseline)',
+  g711_ulaw: 'G.711 mu-law - 8 kHz',
+  g711_alaw: 'G.711 A-law - 8 kHz',
+}
+
+const inputFormatHelp = computed(() =>
+  isInputFormatLocked.value
+    ? 'Stop the microphone before changing format.'
+    : 'Browser-side telephony transcoding. Changing format clears uncommitted input audio.',
+)
+const voiceHelp = computed(() =>
+  connection.isActive
+    ? 'Voice is fixed for the lifetime of a realtime connection. Reconnect to change it.'
+    : 'Choose the voice before connecting.',
+)
 
 const temperatureNote = computed(() =>
   profile.value.temperature.scope === 'response'
@@ -52,34 +74,34 @@ const maxTokensValue = computed({
   },
 })
 
-function hasModality(modality: OutputModality): boolean {
-  return settings.session.outputModalities.includes(modality)
-}
-
-function toggleModality(modality: OutputModality): void {
-  const current = settings.session.outputModalities
-  if (current.includes(modality)) {
-    if (current.length > 1) {
-      settings.session.outputModalities = current.filter((item) => item !== modality)
-    }
-  } else {
-    settings.session.outputModalities = [...current, modality]
-  }
+function onSelectOutputModality(event: Event): void {
+  settings.session.outputModalities = [(event.target as HTMLSelectElement).value as OutputModality]
 }
 
 function onSelectTurnType(event: Event): void {
   settings.session.turnDetection.type = (event.target as HTMLSelectElement)
     .value as TurnDetectionType
 }
+
+function resetSession(): void {
+  if (!connection.isActive) {
+    settings.resetSessionToDefaults()
+  }
+}
 </script>
 
 <template>
   <PanelCard
     title="Session parameters"
-    subtitle="Controls adapt to the selected model's capabilities."
+    subtitle="Configure before connecting; changes are applied automatically to an active session."
   >
     <template #actions>
-      <button type="button" class="btn btn-ghost btn-sm" @click="settings.resetSessionToDefaults">
+      <button
+        type="button"
+        class="btn btn-ghost btn-sm"
+        :disabled="connection.isActive"
+        @click="resetSession"
+      >
         Reset to defaults
       </button>
     </template>
@@ -93,38 +115,59 @@ function onSelectTurnType(event: Event): void {
     </FormField>
 
     <FormField
-      v-if="profile.supportsOutputModalities"
-      label="Output modalities"
-      help="At least one must remain selected."
+      v-if="profile.outputModalities.configurable"
+      label="Output modality"
+      input-id="output-modality-select"
+      help="This model accepts exactly one output modality per session."
     >
-      <div class="chips">
-        <label v-for="modality in OUTPUT_MODALITIES" :key="modality" class="chip">
-          <input
-            :id="`modality-${modality}`"
-            type="checkbox"
-            class="chip-input"
-            :name="`modality-${modality}`"
-            :checked="hasModality(modality)"
-            @change="toggleModality(modality)"
-          />
-          <span class="chip-label">{{ modality }}</span>
-        </label>
-      </div>
+      <select
+        id="output-modality-select"
+        :value="settings.session.outputModalities[0]"
+        @change="onSelectOutputModality"
+      >
+        <option
+          v-for="modality in profile.outputModalities.supported"
+          :key="modality"
+          :value="modality"
+        >
+          {{ modality }}
+        </option>
+      </select>
     </FormField>
 
     <div class="grid-2">
-      <FormField label="Voice" input-id="voice-select">
-        <select id="voice-select" v-model="settings.session.audio.voice">
-          <option v-for="voice in profile.voices" :key="voice" :value="voice">{{ voice }}</option>
+      <FormField
+        label="Microphone input format"
+        input-id="input-format-select"
+        :help="inputFormatHelp"
+      >
+        <select
+          id="input-format-select"
+          v-model="settings.session.audio.inputFormat"
+          :disabled="isInputFormatLocked"
+        >
+          <option v-for="format in INPUT_AUDIO_FORMATS" :key="format" :value="format">
+            {{ INPUT_FORMAT_LABELS[format] }}
+          </option>
         </select>
       </FormField>
 
-      <FormField label="Tool choice" input-id="tool-choice-select">
-        <select id="tool-choice-select" v-model="settings.session.toolChoice">
-          <option v-for="mode in TOOL_CHOICE_MODES" :key="mode" :value="mode">{{ mode }}</option>
+      <FormField label="Voice" input-id="voice-select" :help="voiceHelp">
+        <select
+          id="voice-select"
+          v-model="settings.session.audio.voice"
+          :disabled="connection.isActive"
+        >
+          <option v-for="voice in profile.voices" :key="voice" :value="voice">{{ voice }}</option>
         </select>
       </FormField>
     </div>
+
+    <FormField label="Tool choice" input-id="tool-choice-select">
+      <select id="tool-choice-select" v-model="settings.session.toolChoice">
+        <option v-for="mode in TOOL_CHOICE_MODES" :key="mode" :value="mode">{{ mode }}</option>
+      </select>
+    </FormField>
 
     <FormField
       v-if="profile.temperature.supported"
@@ -167,7 +210,11 @@ function onSelectTurnType(event: Event): void {
       input-id="turn-type-select"
       help="How the service decides when your turn ends."
     >
-      <select id="turn-type-select" :value="settings.session.turnDetection.type" @change="onSelectTurnType">
+      <select
+        id="turn-type-select"
+        :value="settings.session.turnDetection.type"
+        @change="onSelectTurnType"
+      >
         <option v-for="type in profile.turnDetection" :key="type" :value="type">
           {{ TURN_LABELS[type] }}
         </option>
@@ -279,7 +326,11 @@ function onSelectTurnType(event: Event): void {
     <template v-if="profile.supportsNoiseReduction || profile.supportsSpeed">
       <hr class="divider" />
       <div class="grid-2">
-        <FormField v-if="profile.supportsNoiseReduction" label="Noise reduction" input-id="noise-select">
+        <FormField
+          v-if="profile.supportsNoiseReduction"
+          label="Noise reduction"
+          input-id="noise-select"
+        >
           <select id="noise-select" v-model="settings.session.audio.noiseReduction">
             <option v-for="type in NOISE_REDUCTION_TYPES" :key="type" :value="type">
               {{ NOISE_LABELS[type] }}
@@ -327,35 +378,6 @@ function onSelectTurnType(event: Event): void {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
-}
-
-.chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-}
-
-.chip {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-pill);
-  cursor: pointer;
-  font-size: var(--text-sm);
-  font-weight: 600;
-  text-transform: capitalize;
-}
-
-.chip-input {
-  width: auto;
-  margin: 0;
-  accent-color: var(--accent);
-}
-
-.chip-label {
-  user-select: none;
 }
 
 .divider {
