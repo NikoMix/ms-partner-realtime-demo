@@ -6,6 +6,7 @@ import PrivacyNotice from '@/components/PrivacyNotice.vue'
 import SessionControlBar from '@/components/SessionControlBar.vue'
 import ConnectionPanel from '@/components/ConnectionPanel.vue'
 import AudioDevicesPanel from '@/components/AudioDevicesPanel.vue'
+import TranscodedAudioBufferPanel from '@/components/TranscodedAudioBufferPanel.vue'
 import SessionParametersPanel from '@/components/SessionParametersPanel.vue'
 import EventLogPanel from '@/components/EventLogPanel.vue'
 import ToolsPanel from '@/components/ToolsPanel.vue'
@@ -71,6 +72,7 @@ const statusMeta = computed(() => {
         <div class="column">
           <ConnectionPanel />
           <AudioDevicesPanel />
+          <TranscodedAudioBufferPanel />
           <SessionParametersPanel />
         </div>
         <div class="column">

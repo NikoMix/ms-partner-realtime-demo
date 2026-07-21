@@ -128,8 +128,8 @@ export class RealtimeClient {
     }
   }
 
-  sendAudioChunk(base64Audio: string): void {
-    this.sendRaw({ type: ClientEventType.InputAudioBufferAppend, audio: base64Audio })
+  sendAudioChunk(base64Audio: string): boolean {
+    return this.sendRaw({ type: ClientEventType.InputAudioBufferAppend, audio: base64Audio })
   }
 
   commitInput(): void {

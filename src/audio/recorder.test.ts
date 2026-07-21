@@ -143,12 +143,19 @@ describe('MicRecorder', () => {
     vi.stubGlobal('AudioContext', FakeAudioContext)
     vi.stubGlobal('AudioWorkletNode', FakeAudioWorkletNode)
 
-    const onChunk = vi.fn()
+    const callbackOrder: string[] = []
+    const onChunk = vi.fn(() => {
+      callbackOrder.push('realtime')
+    })
+    const onEncodedChunk = vi.fn(() => {
+      callbackOrder.push('archive')
+    })
     const stateChanges: string[] = []
     const recorder = new MicRecorder()
     await recorder.start({
       inputFormat: 'g711_ulaw',
       onChunk,
+      onEncodedChunk,
       onStateChange: (state) => stateChanges.push(state),
     })
 
@@ -165,15 +172,85 @@ describe('MicRecorder', () => {
       new MessageEvent<ArrayBuffer>('message', { data: new Uint8Array([0xd5]).buffer }),
     )
     expect(onChunk).toHaveBeenCalledWith('1Q==')
+    expect(onEncodedChunk).toHaveBeenCalledWith(new Uint8Array([0xd5]))
+    expect(callbackOrder.slice(0, 2)).toEqual(['realtime', 'archive'])
 
     await recorder.stop()
 
     expect(worklet.port.postMessage).toHaveBeenCalledWith('stop')
     expect(onChunk).toHaveBeenLastCalledWith('fw==')
     expect(onChunk).toHaveBeenCalledTimes(2)
+    expect(onEncodedChunk).toHaveBeenLastCalledWith(new Uint8Array([0x7f]))
+    expect(onEncodedChunk).toHaveBeenCalledTimes(2)
     expect(stopTrack).toHaveBeenCalledOnce()
     expect(context.close).toHaveBeenCalledOnce()
     expect(stateChanges).toEqual(['recording', 'idle'])
+  })
+
+  it('keeps realtime capture active when the optional encoded-audio callback fails', async () => {
+    const { worklets } = installPendingCaptureHarness({})
+    const onChunk = vi.fn()
+    const onEncodedChunkError = vi.fn()
+    const recorder = new MicRecorder()
+
+    await recorder.start({
+      inputFormat: 'g711_alaw',
+      onChunk,
+      onEncodedChunk: () => {
+        throw new Error('archive unavailable')
+      },
+      onEncodedChunkError,
+    })
+
+    const worklet = worklets[0]
+    if (!worklet) {
+      throw new Error('Capture worklet was not created')
+    }
+
+    worklet.port.onmessage?.(
+      new MessageEvent<ArrayBuffer>('message', { data: new Uint8Array([0xd5]).buffer }),
+    )
+
+    expect(onChunk).toHaveBeenCalledWith('1Q==')
+    expect(onEncodedChunkError).toHaveBeenCalledWith(new Error('archive unavailable'))
+    expect(recorder.state).toBe('recording')
+
+    worklet.port.postMessage.mockImplementation(() => {
+      worklet.port.onmessage?.(
+        new MessageEvent('message', { data: { type: 'flush-complete' as const } }),
+      )
+    })
+    await recorder.stop()
+    expect(recorder.state).toBe('idle')
+  })
+
+  it('does not archive a chunk that the realtime callback could not enqueue', async () => {
+    const { worklets } = installPendingCaptureHarness({})
+    const onEncodedChunk = vi.fn()
+    const recorder = new MicRecorder()
+
+    await recorder.start({
+      inputFormat: 'g711_ulaw',
+      onChunk: () => false,
+      onEncodedChunk,
+    })
+
+    const worklet = worklets[0]
+    if (!worklet) {
+      throw new Error('Capture worklet was not created')
+    }
+
+    worklet.port.onmessage?.(
+      new MessageEvent<ArrayBuffer>('message', { data: new Uint8Array([0xff]).buffer }),
+    )
+    expect(onEncodedChunk).not.toHaveBeenCalled()
+
+    worklet.port.postMessage.mockImplementation(() => {
+      worklet.port.onmessage?.(
+        new MessageEvent('message', { data: { type: 'flush-complete' as const } }),
+      )
+    })
+    await recorder.stop()
   })
 
   it('releases a microphone stream that arrives after capture was stopped', async () => {

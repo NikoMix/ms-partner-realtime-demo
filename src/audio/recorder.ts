@@ -17,7 +17,9 @@ type RecorderWorkletMessage = ArrayBuffer | { readonly type: 'flush-complete' }
 export interface MicRecorderOptions {
   deviceId?: string
   inputFormat: InputAudioFormat
-  onChunk: (base64Audio: string) => void
+  onChunk: (base64Audio: string) => boolean | void
+  onEncodedChunk?: (encodedAudio: Uint8Array<ArrayBuffer>) => void
+  onEncodedChunkError?: (err: Error) => void
   onError?: (err: Error) => void
   onStateChange?: (state: MicRecorderState) => void
 }
@@ -190,8 +192,19 @@ export class MicRecorder {
 
   private handleAudioChunk(data: ArrayBuffer): void {
     try {
-      const base64Audio = uint8ToBase64(new Uint8Array(data))
-      this.options?.onChunk(base64Audio)
+      const encodedAudio = new Uint8Array(data)
+      const base64Audio = uint8ToBase64(encodedAudio)
+      // The realtime callback always runs first. Only bytes accepted by that path
+      // are eligible for archival, and archival failures remain isolated.
+      const sent = this.options?.onChunk(base64Audio)
+      if (sent === false) {
+        return
+      }
+      try {
+        this.options?.onEncodedChunk?.(encodedAudio)
+      } catch (error) {
+        this.options?.onEncodedChunkError?.(toError(error))
+      }
     } catch (error) {
       this.reportError(toError(error))
       this.setState('error')

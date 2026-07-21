@@ -6,7 +6,7 @@ import ToggleSwitch from '@/components/ui/ToggleSwitch.vue'
 import { useRealtimeSession } from '@/composables/useRealtimeSession'
 import { useConnectionStore } from '@/stores/connection'
 import { useSettingsStore } from '@/stores/settings'
-import { INPUT_AUDIO_FORMATS, type InputAudioFormat } from '@/types/audio'
+import { INPUT_AUDIO_FORMAT_LABELS, INPUT_AUDIO_FORMATS } from '@/types/audio'
 import {
   NOISE_REDUCTION_TYPES,
   SEMANTIC_VAD_EAGERNESS,
@@ -32,12 +32,6 @@ const NOISE_LABELS: Record<NoiseReductionType, string> = {
   none: 'None',
   near_field: 'Near field (headset / close mic)',
   far_field: 'Far field (room / laptop mic)',
-}
-
-const INPUT_FORMAT_LABELS: Record<InputAudioFormat, string> = {
-  pcm16: 'PCM16 - 24 kHz (baseline)',
-  g711_ulaw: 'G.711 mu-law - 8 kHz',
-  g711_alaw: 'G.711 A-law - 8 kHz',
 }
 
 const inputFormatHelp = computed(() =>
@@ -147,7 +141,7 @@ function resetSession(): void {
           :disabled="isInputFormatLocked"
         >
           <option v-for="format in INPUT_AUDIO_FORMATS" :key="format" :value="format">
-            {{ INPUT_FORMAT_LABELS[format] }}
+            {{ INPUT_AUDIO_FORMAT_LABELS[format] }}
           </option>
         </select>
       </FormField>

@@ -1,6 +1,11 @@
 import { effectScope, onScopeDispose, ref, watch } from 'vue'
 import { Pcm16Player } from '@/audio/player'
 import { MicRecorder } from '@/audio/recorder'
+import {
+  TranscodedAudioBuffer,
+  getRawAudioExtension,
+  type TranscodedAudioBufferInfo,
+} from '@/audio/transcoded-audio-buffer'
 import { RealtimeClient } from '@/realtime/client'
 import { useAudioDevicesStore } from '@/stores/audioDevices'
 import { useConnectionStore } from '@/stores/connection'
@@ -27,20 +32,30 @@ function createRealtimeSession() {
   const player = new Pcm16Player()
   const client = new RealtimeClient({ audioSink: player })
   const recorder = new MicRecorder()
+  const transcodedAudioBuffer = new TranscodedAudioBuffer()
 
   const micState = ref<AudioEngineState>('idle')
   const micFormatLocked = ref(false)
   const micStopping = ref(false)
+  const transcodedAudioBufferEnabled = ref(false)
+  const transcodedAudioBufferInfo = ref<TranscodedAudioBufferInfo>(transcodedAudioBuffer.info)
+  const transcodedAudioPlaybackUrl = ref<string | null>(null)
   const volume = ref(1)
   const supportsSinkSelection = player.supportsSinkSelection
+  const AUDIO_BUFFER_UI_UPDATE_INTERVAL_MS = 500
   let sessionUpdateTimer: ReturnType<typeof setTimeout> | null = null
   let activeInputFormat: InputAudioFormat | null = null
+  let lastAudioBufferUiUpdate = 0
   let microphoneOperationGeneration = 0
   let stopMicPromise: Promise<void> | null = null
   let disconnectPromise: Promise<void> | null = null
 
   function logError(type: string, summary: string): void {
     events.add({ direction: 'system', severity: 'error', type, summary })
+  }
+
+  function logWarning(type: string, summary: string): void {
+    events.add({ direction: 'system', severity: 'warning', type, summary })
   }
 
   async function applyOutputDevice(): Promise<void> {
@@ -129,11 +144,36 @@ function createRealtimeSession() {
       return
     }
 
+    if (transcodedAudioBufferEnabled.value) {
+      revokeTranscodedAudioPlayback()
+      transcodedAudioBuffer.begin(inputFormat)
+      refreshTranscodedAudioBufferInfo()
+    }
+
     await recorder.start({
       deviceId: devices.selectedInputId || undefined,
       inputFormat,
       onChunk: (base64Audio: string) => {
-        client.sendAudioChunk(base64Audio)
+        return client.sendAudioChunk(base64Audio)
+      },
+      onEncodedChunk: (encodedAudio) => {
+        if (!transcodedAudioBufferEnabled.value) {
+          return
+        }
+
+        transcodedAudioBuffer.append(encodedAudio)
+        const now = Date.now()
+        if (now - lastAudioBufferUiUpdate >= AUDIO_BUFFER_UI_UPDATE_INTERVAL_MS) {
+          refreshTranscodedAudioBufferInfo(now)
+        }
+      },
+      onEncodedChunkError: (error: Error) => {
+        transcodedAudioBufferEnabled.value = false
+        refreshTranscodedAudioBufferInfo()
+        logError(
+          'audio.buffer.error',
+          `Input audio buffering was disabled while realtime capture continues: ${error.message}`,
+        )
       },
       onStateChange: (state: AudioEngineState) => {
         micState.value = state
@@ -176,6 +216,7 @@ function createRealtimeSession() {
       activeInputFormat = null
       micFormatLocked.value = false
       micStopping.value = false
+      refreshTranscodedAudioBufferInfo()
       if (stopMicPromise === stopping) {
         stopMicPromise = null
       }
@@ -209,6 +250,125 @@ function createRealtimeSession() {
   function setVolume(value: number): void {
     volume.value = value
     player.setVolume(value)
+  }
+
+  function setTranscodedAudioBufferEnabled(enabled: boolean): void {
+    if (micFormatLocked.value || micStopping.value) {
+      logWarning(
+        'audio.buffer.locked',
+        'Stop the microphone before changing input audio buffer capture.',
+      )
+      return
+    }
+
+    transcodedAudioBufferEnabled.value = enabled
+  }
+
+  function clearTranscodedAudioBuffer(): void {
+    if (micFormatLocked.value || micStopping.value) {
+      logWarning('audio.buffer.locked', 'Stop the microphone before clearing its audio buffer.')
+      return
+    }
+
+    revokeTranscodedAudioPlayback()
+    transcodedAudioBuffer.clear()
+    refreshTranscodedAudioBufferInfo()
+  }
+
+  function prepareTranscodedAudioPlayback(): string | null {
+    if (micFormatLocked.value || micStopping.value) {
+      logWarning('audio.buffer.locked', 'Stop the microphone before preparing buffered playback.')
+      return null
+    }
+    if (connection.responseInProgress) {
+      logWarning(
+        'audio.buffer.response_active',
+        'Wait for the model response to finish before playing buffered input audio.',
+      )
+      return null
+    }
+
+    try {
+      revokeTranscodedAudioPlayback()
+      transcodedAudioPlaybackUrl.value = createObjectUrl(
+        transcodedAudioBuffer.createPlayableWavBlob(),
+      )
+      return transcodedAudioPlaybackUrl.value
+    } catch (error) {
+      logError('audio.buffer.playback.error', toError(error).message)
+      return null
+    }
+  }
+
+  function downloadTranscodedAudioWav(): void {
+    downloadTranscodedAudio(
+      () => transcodedAudioBuffer.createPlayableWavBlob(),
+      'wav',
+      'audio.buffer.download.wav.error',
+    )
+  }
+
+  function downloadTranscodedAudioRaw(): void {
+    const format = transcodedAudioBufferInfo.value.format
+    if (!format) {
+      logError('audio.buffer.download.raw.error', 'No transcoded microphone audio is available.')
+      return
+    }
+
+    downloadTranscodedAudio(
+      () => transcodedAudioBuffer.createRawBlob(),
+      getRawAudioExtension(format),
+      'audio.buffer.download.raw.error',
+    )
+  }
+
+  function downloadTranscodedAudio(
+    createBlob: () => Blob,
+    extension: string,
+    errorType: string,
+  ): void {
+    if (micFormatLocked.value || micStopping.value) {
+      logWarning('audio.buffer.locked', 'Stop the microphone before downloading its audio buffer.')
+      return
+    }
+    if (connection.responseInProgress) {
+      logWarning(
+        'audio.buffer.response_active',
+        'Wait for the model response to finish before exporting buffered input audio.',
+      )
+      return
+    }
+
+    try {
+      const format = transcodedAudioBufferInfo.value.format
+      const startedAt = transcodedAudioBufferInfo.value.startedAt
+      if (!format || !startedAt) {
+        throw new Error('No transcoded microphone audio is available.')
+      }
+
+      triggerDownload(
+        createBlob(),
+        `realtime-input-${format}-${formatTimestamp(startedAt)}.${extension}`,
+      )
+    } catch (error) {
+      logError(errorType, toError(error).message)
+    }
+  }
+
+  function refreshTranscodedAudioBufferInfo(updatedAt = Date.now()): void {
+    transcodedAudioBufferInfo.value = transcodedAudioBuffer.info
+    lastAudioBufferUiUpdate = updatedAt
+  }
+
+  function revokeTranscodedAudioPlayback(): void {
+    if (!transcodedAudioPlaybackUrl.value) {
+      return
+    }
+
+    if (typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') {
+      URL.revokeObjectURL(transcodedAudioPlaybackUrl.value)
+    }
+    transcodedAudioPlaybackUrl.value = null
   }
 
   function scheduleSessionUpdate(): void {
@@ -277,11 +437,22 @@ function createRealtimeSession() {
     },
   )
 
+  watch(
+    () => connection.responseInProgress,
+    (responseInProgress) => {
+      if (responseInProgress) {
+        revokeTranscodedAudioPlayback()
+      }
+    },
+  )
+
   onScopeDispose(() => {
     if (sessionUpdateTimer !== null) {
       clearTimeout(sessionUpdateTimer)
     }
     void stopMic()
+    revokeTranscodedAudioPlayback()
+    transcodedAudioBuffer.clear()
     player.dispose()
   })
 
@@ -289,6 +460,9 @@ function createRealtimeSession() {
     micState,
     micFormatLocked,
     micStopping,
+    transcodedAudioBufferEnabled,
+    transcodedAudioBufferInfo,
+    transcodedAudioPlaybackUrl,
     volume,
     supportsSinkSelection,
     connect,
@@ -298,9 +472,44 @@ function createRealtimeSession() {
     toggleMic,
     commitAndRespond,
     applyOutputDevice,
+    setTranscodedAudioBufferEnabled,
+    clearTranscodedAudioBuffer,
+    prepareTranscodedAudioPlayback,
+    downloadTranscodedAudioWav,
+    downloadTranscodedAudioRaw,
     setVolume,
   }
 }
+
+function createObjectUrl(blob: Blob): string {
+  if (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') {
+    throw new Error('This browser cannot create local audio playback URLs.')
+  }
+  return URL.createObjectURL(blob)
+}
+
+function triggerDownload(blob: Blob, filename: string): void {
+  if (typeof document === 'undefined') {
+    throw new Error('Downloads are unavailable outside a browser.')
+  }
+
+  const url = createObjectUrl(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = filename
+  anchor.hidden = true
+  document.body.append(anchor)
+  anchor.click()
+  anchor.remove()
+  globalThis.setTimeout(() => URL.revokeObjectURL(url), 0)
+}
+
+function formatTimestamp(timestamp: number): string {
+  return new Date(timestamp).toISOString().replaceAll(':', '-').replaceAll('.', '-')
+}
+
+const toError = (error: unknown): Error =>
+  error instanceof Error ? error : new Error(String(error))
 
 type RealtimeSession = ReturnType<typeof createRealtimeSession>
 

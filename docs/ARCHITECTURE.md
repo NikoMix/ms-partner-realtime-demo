@@ -40,7 +40,7 @@ The event normalizer tolerates realtime audio-event name differences across prev
 
 ### Audio engine
 
-The audio layer captures mono microphone input and encodes preallocated 100 ms chunks in an AudioWorklet. PCM16 uses 24 kHz; optional G.711 mu-law and A-law use 8 kHz browser resampling and one-byte companding for telephony accuracy tests. A streaming worklet resampler covers browsers that cannot create a native 8 kHz audio context. The main thread base64-encodes the transferred chunks for WebSocket append events and plays PCM16 model output through a gapless player. Chromium browsers provide the best output-device selection support through `setSinkId`.
+The audio layer captures mono microphone input and encodes preallocated 100 ms chunks in an AudioWorklet. PCM16 uses 24 kHz; optional G.711 mu-law and A-law use 8 kHz browser resampling and one-byte companding for telephony accuracy tests. A streaming worklet resampler covers browsers that cannot create a native 8 kHz audio context. The main thread base64-encodes the transferred chunks for WebSocket append events and plays PCM16 model output through a gapless player. An opt-in rolling buffer can retain transferred encoded chunks after the realtime callback runs; it adds no per-chunk copy, stays bounded to five minutes, and only decodes or concatenates data when the user requests playback or download. Chromium browsers provide the best output-device selection support through `setSinkId`.
 
 ### Pinia stores
 
@@ -68,6 +68,8 @@ flowchart LR
   Encoded --> B64[Base64 encode]
   B64 --> Append[input_audio_buffer.append]
   Append --> WS[Realtime WebSocket]
+  Encoded -. optional, after realtime send .-> Archive[Bounded in-memory encoded buffer]
+  Archive --> Export[On-demand PCM WAV playback or raw download]
   WS --> Azure[Azure AI Foundry / Azure OpenAI]
   Azure --> Delta[response.audio.delta]
   Delta --> Player[Gapless audio player]

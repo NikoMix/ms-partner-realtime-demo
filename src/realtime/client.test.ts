@@ -100,6 +100,20 @@ beforeEach(() => {
 })
 
 describe('RealtimeClient', () => {
+  it('reports whether an audio chunk was queued on the WebSocket', () => {
+    const { client, sockets } = createClient()
+
+    expect(client.sendAudioChunk('AQ==')).toBe(false)
+    client.connect()
+    const socket = firstSocket(sockets)
+    socket.open()
+
+    expect(client.sendAudioChunk('AQ==')).toBe(true)
+    expect(payload(socket.sent.at(-1))).toMatchObject({
+      type: 'input_audio_buffer.append',
+    })
+  })
+
   it('waits for session.created before sending session.update', () => {
     const { client, sockets } = createClient()
     client.connect()

@@ -24,9 +24,10 @@ withDefaults(defineProps<{ compact?: boolean }>(), { compact: false })
       <p class="text-sm text-muted">
         The endpoint, deployment name, and API key you enter are held in memory only for this
         browser session. They are
-        <strong>never stored, logged, or transmitted anywhere</strong> except directly to the
-        Azure endpoint you specify, solely to establish and authenticate the realtime connection.
-        The API key is redacted everywhere in the event log below.
+        <strong>never stored, logged, or transmitted anywhere</strong> except directly to the Azure
+        endpoint you specify, solely to establish and authenticate the realtime connection. The API
+        key is redacted everywhere in the event log below. Optional input-audio captures also remain
+        in memory only until you clear them or close the page.
       </p>
     </div>
   </div>

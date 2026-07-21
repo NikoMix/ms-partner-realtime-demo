@@ -9,6 +9,8 @@ Realtime Audio Studio is a static Vue 3 + TypeScript + Vite PWA for testing Azur
 
 - Captures PCM16 microphone audio at 24 kHz or transcodes it in an AudioWorklet to
   G.711 mu-law / A-law at 8 kHz for telephony accuracy testing.
+- Optionally retains a bounded, memory-only copy of the exact encoded microphone bytes for
+  on-demand playback, playable WAV export, or raw PCM/G.711 download.
 - Plays model audio responses through a user-selectable speaker.
 - Supports Azure AI Foundry and Azure OpenAI realtime audio endpoints.
 - Includes GitHub Models as a REST-inference-only provider with realtime UX gated/disabled.
@@ -52,10 +54,12 @@ Open the local Vite URL, then use the app from a secure context (`localhost` is 
 3. Configure realtime session parameters for that model.
 4. Allow microphone access when the browser prompts.
 5. Pick an input microphone and, in supported browsers, an output speaker.
-6. Connect and start talking.
-7. Adjust session parameters as needed; connected sessions receive changes automatically.
-8. Watch the event log for socket events, audio events, session updates, and tool-call messages.
-9. Define stub tools to test model function-call behavior. Stub tools never execute real code and never call external MCP servers.
+6. Optionally enable the transcoded input buffer before starting the microphone.
+7. Connect and start talking.
+8. Adjust session parameters as needed; connected sessions receive changes automatically.
+9. Listen to or download the latest input buffer after stopping the microphone.
+10. Watch the event log for socket events, audio events, session updates, and tool-call messages.
+11. Define stub tools to test model function-call behavior. Stub tools never execute real code and never call external MCP servers.
 
 ## Configuration and parameters
 
